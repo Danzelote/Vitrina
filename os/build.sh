@@ -42,6 +42,8 @@ PKGS=(
     xserver-xorg-core xserver-xorg-legacy xserver-xorg-input-libinput xinit x11-xserver-utils x11-utils
     libgl1 libgl1-mesa-dri libglx-mesa0 libegl1 libx11-6 libxext6 libxcursor1 libxi6 libxrandr2
     libxss1 libxinerama1 libxkbcommon0 libxxf86vm1
+    # Logo de arranque y apagado (sin textos de Linux)
+    plymouth
     # Sonido
     alsa-utils
     # Cámara iSight (firmware tomado del macOS de la Mac) y lectura del disco de macOS
@@ -112,6 +114,11 @@ for unit in apt-daily.timer apt-daily-upgrade.timer man-db.timer e2scrub_all.tim
     in_root systemctl mask "$unit" >/dev/null 2>&1 || true
 done
 in_root systemctl enable NetworkManager systemd-timesyncd vitrina-isight >/dev/null 2>&1 || true
+# Logo de arranque (queda dentro del initramfs al regenerarlo abajo)
+in_root plymouth-set-default-theme vitrina
+# Sin textos al entrar: ni el mensaje del día ni "último acceso"
+: > "$ROOT/etc/motd"
+touch "$ROOT/home/vitrina/.hushlogin"
 
 # -----------------------------------------------------------------------------
 log "La app"

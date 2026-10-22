@@ -83,5 +83,6 @@ jobs:
             out/vitrina-*.iso
             out/*.sha256
             out/pantalla.png
+            out/arranque-*.png
             out/serial.log
             out/prueba.txt

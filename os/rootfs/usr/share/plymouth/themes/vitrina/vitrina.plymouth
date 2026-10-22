@@ -1,0 +1,8 @@
+[Plymouth Theme]
+Name=Vitrina
+Description=Arranque de Vitrina: la ventana de 4 cuadros
+ModuleName=script
+
+[script]
+ImageDir=/usr/share/plymouth/themes/vitrina
+ScriptFile=/usr/share/plymouth/themes/vitrina/vitrina.script

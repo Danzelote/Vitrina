@@ -54,6 +54,7 @@ THEME_TIME = 0.7       # cambio gradual entre tema claro y oscuro
 BAR_H = 72
 HUD_IN, HUD_HOLD, HUD_OUT = 0.15, 1.4, 0.35   # píldora de volumen y brillo
 # Teclas de volumen y brillo (códigos de SDL; pygame no les pone nombre).
+ENTER_EASE = cubic_bezier(0.7, 0.0, 0.3, 1.0)    # la ventanita del logo crece hasta llenar la pantalla
 POWER_KEY = 0x40000066        # tecla de encendido (SDLK_POWER)
 MEDIA_KEYS = {0x40000080: "vol_up", 0x40000081: "vol_down", 0x4000007F: "mute", 0x40000106: "mute",
               0x40000114: "bright_up", 0x40000113: "bright_down"}
@@ -196,6 +197,7 @@ class App:
         self.bright = self.settings.brightness   # brillo que se ve ahorita (se acerca al objetivo)
         self.bright_fast_until = -1e9
         self.calib = None           # calibración del brillo mínimo en curso
+        self.intro = {"start": now, "phase": "load"}   # logo de arranque (sigue al de Linux)
         self.help_open = False      # lista de atajos de teclado (tecla H)
         self.help_at = 0.0
         self.help_amt = 0.0
@@ -1638,7 +1640,103 @@ class App:
         self.draw_night(now)
         self.draw_help(now)
         self.draw_power(now)
+        if self.intro:
+            self.draw_intro(now)
         self.draw_dim()
+
+    # ------------------------------------------------------------------ arranque
+
+    LOGO_SQ, LOGO_STEP = 38.5, 45.5      # cuadro y distancia entre cuadros (ventana de 84×84)
+    LOGO_PERIOD, LOGO_DELAY = 3.2, 0.8
+
+    def logo_origin(self):
+        """Esquina de la ventana del logo: el mismo lugar que en el arranque de Linux."""
+        return self.vw / 2 - 42, self.vh / 2 - 70
+
+    @staticmethod
+    def _smooth(u):
+        return u * u * (3 - 2 * u)
+
+    def logo_scale(self, k, t):
+        """Cada cuadro crece suave mientras el anterior se encoge (como el hover)."""
+        local = ((t - k * self.LOGO_DELAY) % self.LOGO_PERIOD) / self.LOGO_PERIOD
+        if local < 0.25:
+            return 0.9 + 0.1 * self._smooth(local / 0.25)
+        if local < 0.5:
+            return 1.0 - 0.1 * self._smooth((local - 0.25) / 0.25)
+        return 0.9
+
+    def draw_intro(self, now):
+        """Logo de Vitrina: los 4 cuadros "respiran" mientras carga; al estar
+        lista, se juntan al centro en una sola ventanita que crece hasta llenar
+        la pantalla y deja ver la galería (o el código para el celular)."""
+        it, g = self.intro, self.gfx
+        t = now - it["start"]
+        if it["phase"] == "load":
+            ready = not self.items or self.items[self.hero].ready
+            if (t > 1.6 and ready) or t > 8:
+                it["phase"], it["at"] = "merge", now
+                it["scales"] = [self.logo_scale(k, t) for k in range(4)]
+        sq = g.shape(round(self.LOGO_SQ * 2), round(self.LOGO_SQ * 2), 14)
+        wx, wy = self.logo_origin()
+        S, D = self.LOGO_SQ, self.LOGO_STEP
+        homes = [(wx, wy), (wx + D, wy), (wx + D, wy + D), (wx, wy + D)]
+        inner = [(wx + S, wy + S), (wx + D, wy + S), (wx + D, wy + D), (wx + S, wy + D)]   # esquina que no se mueve
+        center = (wx + 42 - S / 2, wy + 42 - S / 2)
+        white = (255, 255, 255)
+        if it["phase"] in ("load", "merge"):
+            self.ren.draw_color = (0, 0, 0, 255)
+            self.ren.clear()                       # todo negro: el logo va solo
+            m = 0.0 if it["phase"] == "load" else min(1.0, (now - it["at"]) / 0.7)
+            e = EASE_IN_OUT(m)
+            for k in range(4):
+                sc = self.logo_scale(k, t) if it["phase"] == "load" else lerp(it["scales"][k], 1.0, e)
+                size = S * sc
+                ix, iy = inner[k]
+                x = ix - size if k in (0, 3) else ix
+                y = iy - size if k in (0, 1) else iy
+                if it["phase"] == "merge":
+                    hx, hy = homes[k]
+                    x = lerp(x, center[0], e)
+                    y = lerp(y, center[1], e)
+                sq.color = white
+                sq.alpha = 255
+                sq.draw(dstrect=(x, y, size, size))
+            name_a = 1.0 if it["phase"] == "load" else max(0.0, 1 - m / 0.55)
+            if name_a > 0.01:
+                title = g.text("Vitrina", 22, white, True)
+                sub = g.text("OS", 22, (142, 142, 147), False)
+                w1, h1 = g.tsize(title)
+                w2, _ = g.tsize(sub)
+                x0 = self.vw / 2 - (w1 + 6 + w2) / 2
+                for tex, xx, ww in ((title, x0, w1), (sub, x0 + w1 + 6, w2)):
+                    tex.alpha = int(255 * name_a)
+                    tex.draw(dstrect=(xx, wy + 84 + 28, ww, h1))
+            if it["phase"] == "merge" and m >= 1.0:
+                it["phase"], it["at"] = "enter", now
+            return
+        # Entrar: la ventanita crece hasta cubrir la pantalla; por dentro se ve la app.
+        p = min(1.0, (now - it["at"]) / 1.0)
+        e = ENTER_EASE(p)
+        big = math.hypot(self.vw, self.vh) * 1.15
+        size = lerp(S, big, e)
+        cx, cy = center[0] + S / 2, center[1] + S / 2
+        x, y = cx - size / 2, cy - size / 2
+        black = (0, 0, 0)
+        # Fuera de la ventanita: negro.
+        g.rect(0, 0, self.vw, max(0, y), black)
+        g.rect(0, y + size, self.vw, max(0, self.vh - y - size), black)
+        g.rect(0, y, max(0, x), size, black)
+        g.rect(x + size, y, max(0, self.vw - x - size), size, black)
+        # Dentro: primero blanca (como el logo) y se vuelve transparente.
+        wa = max(0.0, 1 - p / 0.35)
+        if wa > 0.003:
+            g.rect(x, y, size, size, black, wa)
+            sq.color = white
+            sq.alpha = int(255 * wa)
+            sq.draw(dstrect=(x, y, size, size))
+        if p >= 1.0:
+            self.intro = None
 
     HELP = [
         ("Presentación", [("P", "Empezar o salir de la presentación"), ("← →", "Foto anterior o siguiente"),
@@ -1826,6 +1924,8 @@ class App:
         self.ren.clear()
         if not self.items:
             self.draw_empty_library()
+            with TH.using(TH.DARK):
+                self.draw_toast(now)
             return
         hero = self.items[self.morph_i]
         if frame_amt > 0 and hero.ready and hero.vertical:
@@ -2492,7 +2592,26 @@ class App:
 
     def wifi_connect(self):
         if self.pw and len(self.pw["text"]) >= 8:
-            self.wifi.connect(self.pw["ssid"], self.pw["text"])
+            self.join_wifi(self.pw["ssid"], self.pw["text"])
+
+    def join_wifi(self, ssid, password="", hidden=False):
+        """Conectarse desde la Vitrina. Al lograrlo se cierra Ajustes y se avisa
+        arriba (y si aún no hay fotos, se ve el código para el celular)."""
+        self.wifi_joining = ssid
+        self.wifi.connect(ssid, password, hidden)
+
+    def check_wifi_joined(self, now):
+        ssid = getattr(self, "wifi_joining", None)
+        if not ssid or self.wifi.connecting:
+            return
+        self.wifi_joining = None
+        if self.wifi.message == "ok":
+            if self.pw is not None:
+                self.close_password()
+            if self.settings_open:
+                self.close_settings(now)
+            self.toast_new = 0
+            self.toast = ("✓  " + tr("Conectada a {ssid}", ssid=ssid), now)
 
     def choose_network(self, net):
         ssid, _signal, secure, in_use = net
@@ -2503,7 +2622,7 @@ class App:
             self.wifi.message = ""
             pygame.key.start_text_input()
         else:
-            self.wifi.connect(ssid)
+            self.join_wifi(ssid)
 
     def draw_wifi_tab(self, x, y, w, now):
         """Ajustes → WiFi: redes cercanas, contraseña y estado de la conexión."""
@@ -2611,7 +2730,7 @@ class App:
         if scanner.result:
             wifi = scanner.result
             self.stop_scan()
-            self.wifi.connect(wifi["ssid"], wifi["password"], wifi["hidden"])
+            self.join_wifi(wifi["ssid"], wifi["password"], wifi["hidden"])
             self.toast = (tr("Conectando a {ssid}…", ssid=wifi["ssid"]), now)
             return
         if now - sc["start"] > 180:          # nadie lo usó: se apaga la cámara
@@ -2773,6 +2892,7 @@ class App:
             self.update(now)
         else:
             self.update_idle(now)
+        self.check_wifi_joined(now)
         if now - self.wifi_checked > 5:      # estado de la red, cada 5 s
             self.wifi_checked = now
             self.wifi.refresh_status()

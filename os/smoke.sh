@@ -19,14 +19,19 @@ echo "Aceleración: ${ACCEL:-ninguna}"
 
 qemu-system-x86_64 $ACCEL -m 2048 -smp 2 -cdrom "$ISO" \
     -kernel "$DIR/vmlinuz" -initrd "$DIR/initrd.img" \
-    -append "boot=live console=ttyS0,115200 systemd.journald.forward_to_console=1" \
+    -append "boot=live quiet splash console=ttyS0,115200 systemd.journald.forward_to_console=1" \
     -vga std -display none -serial "file:$LOG" -monitor "unix:$MON,server,nowait" \
     -nic user,model=e1000 &
 QEMU=$!
 
 ok=1
+shot=0
 for _ in $(seq 1 120); do
     sleep 5
+    shot=$((shot + 1))
+    if [ $shot -le 6 ]; then     # el logo de arranque, antes de que abra la app
+        echo "screendump $DIR/arranque-$shot.png -f png" | socat - "UNIX-CONNECT:$MON" >/dev/null 2>&1 || true
+    fi
     if grep -q "fotos encontradas" "$LOG" 2>/dev/null; then ok=0; break; fi
     kill -0 $QEMU 2>/dev/null || break
 done
