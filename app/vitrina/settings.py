@@ -7,11 +7,15 @@ from dataclasses import asdict, dataclass
 from . import config as C
 
 
-def _path():
+def config_dir():
     base = os.environ.get("XDG_CONFIG_HOME") or os.path.join(os.path.expanduser("~"), ".config")
     d = os.path.join(base, "vitrina")
     os.makedirs(d, exist_ok=True)
-    return os.path.join(d, "settings.json")
+    return d
+
+
+def _path():
+    return os.path.join(config_dir(), "settings.json")
 
 
 @dataclass
@@ -20,6 +24,7 @@ class Settings:
     show_info: bool = True
     shuffle: bool = False
     theme: str = "auto"          # "dark" | "light" | "auto"
+    language: str = "es"         # "es" | "en"
     kenburns: str = "pan"        # "off" | "zoom" | "pan" (zoom y paneo)
     memories: bool = True        # "Un día como hoy"
     clock: str = "off"           # "off" | "12" | "24"

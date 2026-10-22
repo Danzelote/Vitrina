@@ -33,6 +33,18 @@ python app/main.py --folder ~/Pictures/MiCarpeta
 python app/main.py --demo --fullscreen
 ```
 
+## La app del celular
+
+Al correr Vitrina se enciende también la app del celular (la terminal muestra su dirección). Para probarla:
+
+1. Corre Vitrina con una carpeta, por ejemplo vacía: `python app/main.py --folder ~/Pictures/Vitrina`. Si la carpeta no existe, se crea.
+2. Escanea el código QR con la cámara del celular. Aparece en la pantalla si la biblioteca está vacía, y siempre en **Ajustes → Celular**.
+3. El celular y la Mac deben estar en el mismo WiFi. La primera vez, macOS pregunta si permites conexiones entrantes a Python: hay que aceptar.
+
+Desde el celular se suben fotos y videos, se crean y renombran colecciones, se mueven o borran fotos (van a una papelera oculta, `.papelera`, dentro de la carpeta) y se cambian los ajustes. Lo que se sube aparece en la Vitrina en segundos y se muestra primero en la presentación. Con `--no-web` se apaga.
+
+Si actualizaste desde una versión anterior, vuelve a correr `pip install -r requirements.txt` (se agregó `segno`, para el código QR).
+
 La primera vez con una carpeta nueva, Vitrina prepara las miniaturas en segundo plano; abajo a la derecha se ve el avance. Los videos se procesan después de las fotos (una versión ligera para reproducir y un clip corto de vista previa); mientras tanto se reproduce el original. Sin `mpv` instalado, los videos se muestran con su portada. Las siguientes veces abre de inmediato. La caché vive en `~/.cache/vitrina`.
 
 ## Controles
@@ -59,6 +71,7 @@ La primera vez con una carpeta nueva, Vitrina prepara las miniaturas en segundo 
 | `Esc` en meses, años o colecciones | Entra un nivel |
 | `Esc` en la cuadrícula | Regresa a la presentación |
 | Sin mover el mouse (15 s, configurable) | Regresa a la presentación |
+| Ajustes · Celular | Código QR para emparejar el celular y lista de celulares conectados |
 | `i` | Muestra u oculta la fecha y el lugar |
 | `n` | Simula la noche (se apaga en segundos) para probar el modo noche; otra vez la regresa |
 | `f` | Pantalla completa |
@@ -92,11 +105,14 @@ Las pruebas cubren la lógica de la cámara (que se alcance cada orilla desde cu
 | `app/vitrina/memories.py` | "Un día como hoy" |
 | `app/vitrina/night.py` | Modo noche: horario, sensor de luz y brillo de la pantalla |
 | `app/vitrina/nightclock.py` | Relojes grandes de la noche (ventana y clásico) |
+| `app/vitrina/i18n.py` | Textos en español e inglés |
+| `app/vitrina/livelib.py` | Biblioteca en vivo: fotos que se agregan, mueven o borran mientras corre |
+| `app/vitrina/web/server.py` | Servidor de la app del celular: emparejamiento, subidas y ajustes |
+| `app/vitrina/web/static/` | La app del celular (HTML, CSS y JavaScript, sin dependencias) |
 | `app/vitrina/fonts/` | Tipografías libres de los relojes, con sus licencias |
 | `app/vitrina/ui.py` | La interfaz: presentación, cuadrícula, niveles, visor y controles |
 
 ## Qué falta (siguientes versiones)
 
 - Búsqueda
-- La app web del celular
 - La imagen de la USB y el instalador

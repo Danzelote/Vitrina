@@ -21,9 +21,13 @@ def main():
     ap.add_argument("--fullscreen", action="store_true", help="pantalla completa")
     ap.add_argument("--invert-zoom", action="store_true", help="invierte la dirección del zoom con la rueda")
     ap.add_argument("--debug-input", action="store_true", help="muestra en la terminal los eventos del trackpad")
+    ap.add_argument("--no-web", action="store_true", help="sin la app del celular")
     args = ap.parse_args()
 
     folder = args.folder
+    if folder:
+        folder = os.path.abspath(os.path.expanduser(folder))
+        os.makedirs(folder, exist_ok=True)
     if args.demo or not folder:
         print("Generando fotos de prueba (solo la primera vez)…")
         folder = library.make_demo(args.demo or 140)
@@ -33,9 +37,22 @@ def main():
     processor = library.Processor(items)
     processor.start()
 
+    from vitrina.livelib import LiveLibrary
     from vitrina.ui import App
-    App(items, processor, fullscreen=args.fullscreen, invert_zoom=args.invert_zoom,
-        debug_input=args.debug_input).run()
+    lib = LiveLibrary(folder, items, processor)
+    app = App(items, processor, fullscreen=args.fullscreen, invert_zoom=args.invert_zoom,
+              debug_input=args.debug_input, lib=lib)
+    if not args.no_web:
+        try:
+            from vitrina.web.server import WebServer
+            app.web = WebServer(app, lib)
+            url = app.web.base_url()
+            print(f"App del celular: {url}" if url else "App del celular: sin red por ahora")
+        except OSError as exc:
+            print("No se pudo iniciar la app del celular:", exc)
+    app.run()
+    if app.web:
+        app.web.close()
 
 
 if __name__ == "__main__":

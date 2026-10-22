@@ -7,9 +7,10 @@ alejarse más, las fotos se agrupan por meses y por años (zoom semántico).
 
 import math
 import os
+import queue
 import random
 import time
-from datetime import date
+from datetime import date, datetime
 
 os.environ.setdefault("SDL_RENDER_SCALE_QUALITY", "1")  # escalado suave (lineal)
 
@@ -22,6 +23,8 @@ from . import kenburns as KB  # noqa: E402
 from . import memories as MEM  # noqa: E402
 from . import night as NIGHT  # noqa: E402
 from . import nightclock as NC  # noqa: E402
+from . import i18n as I18N  # noqa: E402
+from .i18n import tr  # noqa: E402
 from . import config as C  # noqa: E402
 from . import levels as LV  # noqa: E402
 from . import video as VID  # noqa: E402
@@ -54,8 +57,11 @@ def inside(rect, x, y):
 
 class App:
     def __init__(self, items, processor=None, fullscreen=False, invert_zoom=False, size=(1280, 800),
-                 debug_input=False):
+                 debug_input=False, lib=None):
         self.debug_input = debug_input
+        self.lib = lib                      # biblioteca en vivo (fotos que llegan del celular)
+        self.events = queue.Queue()         # órdenes del servidor web, se atienden en este hilo
+        self.web = None                     # servidor web (lo asigna main.py)
         pygame.display.init()
         pygame.font.init()
         self.win = Window("Vitrina", size=size, resizable=True, allow_high_dpi=True)
@@ -64,10 +70,11 @@ class App:
         self.ren = Renderer(self.win, accelerated=-1, vsync=True)
         self.gfx = Gfx(self.ren)
         self.fit_to_window()
-        self.items = items
+        self.items = list(items)
         self.processor = processor
         self.settings = Settings.load()
         T.set(TH.resolve(self.settings.theme))
+        I18N.set_lang(self.settings.language)
         self.zoom_sign = -1 if invert_zoom else 1
         self.plane = cam.Plane(*cam.grid_shape(max(1, len(items))))
         self.groups = LV.Groups(items)
@@ -79,7 +86,7 @@ class App:
         self.lvl_tween = None
         self.lvl_origin = (self.vw / 2, self.vh / 2)
         self.zi = C.DEFAULT_ZOOM
-        self.hero = min(len(items) - 1, 4 * self.plane.cols + 6) if items else 0
+        self.hero = max(0, min(len(items) - 1, 4 * self.plane.cols + 6))
         self.morph_i = self.hero
         self.big_kind = FRAME
         cx, cy = self.plane.cell_center(self.hero)
@@ -129,6 +136,10 @@ class App:
         self.ignore_swipe_until_gap = False
         self.swipe_acc = 0.0
         self.settings_tab = "show"
+        self.lib_version = lib.version if lib else 0
+        self.new_keys = []          # fotos recién llegadas: se muestran primero
+        self.toast = None           # (texto, inicio) aviso discreto arriba
+        self.toast_new = 0
         self.settings_tw = None     # animación al abrir y cerrar Ajustes
         self.settings_amt = 0.0
         self.offscreen_tex = {}     # texturas para el desenfoque del fondo y el panel
@@ -552,6 +563,16 @@ class App:
 
     def next_index(self):
         pool = self.slide_pool()
+        if self.new_keys:          # lo recién subido va primero (en cuanto esté listo)
+            idx = {it.key: i for i, it in enumerate(self.items)}
+            for k in list(self.new_keys):
+                i = idx.get(k)
+                if i is None:
+                    self.new_keys.remove(k)
+                elif self.items[i].ready:
+                    self.new_keys.remove(k)
+                    if i != self.hero:
+                        return i
         if self.settings.memories:
             self.slides_since_memory += 1
             if self.slides_since_memory >= MEM.EVERY:
@@ -845,6 +866,9 @@ class App:
         self.settings.theme = value
         self.apply_theme()
 
+    def apply_language(self):
+        I18N.set_lang(self.settings.language)
+
     def apply_theme(self):
         """Cambia de tema con un fundido gradual de todos los colores."""
         pal = TH.resolve(self.settings.theme)
@@ -872,6 +896,98 @@ class App:
         self.settings_open = False
         self.settings_tw = Tween((self.settings_amt,), (0.0,), SETTINGS_OUT, EASE, now)
         self.settings.save()
+
+    # ------------------------------------------------------------------ biblioteca en vivo
+
+    def poll_events(self, now):
+        """Atiende lo que pidió el celular (en este hilo, el de la interfaz)."""
+        while True:
+            try:
+                event = self.events.get_nowait()
+            except queue.Empty:
+                break
+            kind, data = event[0], event[1]
+            try:
+                self.handle_event(kind, data, now)
+            finally:
+                if len(event) > 2:
+                    event[2].set()     # el servidor web espera a que se haya aplicado
+        if self.lib and self.lib.version != self.lib_version:
+            # Se aplica cuando no estorba: en la presentación, sin fundido en curso.
+            if not self.items or (self.mode == FRAME and not self.fade and not self.cam_tween):
+                self.lib_version = self.lib.version
+                self.set_items(list(self.lib.snapshot), now)
+
+    def handle_event(self, kind, data, now):
+        if kind == "added" and self.lib:
+            new = self.lib.add_paths(data)
+            if new:
+                self.new_keys.extend(it.key for it in new)
+                # Varias subidas seguidas suman en el mismo aviso.
+                recent = self.toast and self.toast_new and now - self.toast[1] < 3.5
+                self.toast_new = (self.toast_new if recent else 0) + len(new)
+                n = self.toast_new
+                text = tr("1 foto nueva") if n == 1 else tr("{n} fotos nuevas", n=n)
+                self.toast = (text, now - 0.4 if recent else now)   # si ya se veía, no vuelve a aparecer
+        elif kind == "removed" and self.lib:
+            self.lib.remove_paths(data)
+        elif kind == "moved" and self.lib:
+            self.lib.moved(data)
+        elif kind == "renamed" and self.lib:
+            self.lib.renamed_collection(*data)
+        elif kind == "settings":
+            self.apply_settings(data, now)
+
+    def apply_settings(self, changes, now):
+        st = self.settings
+        for k, v in changes.items():
+            setattr(st, k, v)
+        if "theme" in changes:
+            self.apply_theme()
+        if "language" in changes:
+            self.apply_language()
+        if "shuffle" in changes:
+            self.queue = []
+        st.save()
+
+    def set_items(self, items, now):
+        """Cambia la lista de fotos conservando lo que se está viendo."""
+        old = self.items
+        key = lambda i: old[i].key if i is not None and 0 <= i < len(old) else None  # noqa: E731
+        hero_key = key(self.hero)
+        players = [(role, key(i), p) for role, (i, p) in self.players.items()]
+        kb = {key(i): v for i, v in self.kb.items()}
+        self.items = items
+        idx = {it.key: i for i, it in enumerate(items)}
+        self.players = {}
+        for role, k, p in players:
+            if k in idx:
+                self.players[role] = (idx[k], p)
+            else:
+                p.close()
+        self.kb = {idx[k]: v for k, v in kb.items() if k in idx}
+        self.plane = cam.Plane(*cam.grid_shape(max(1, len(items))))
+        self.groups = LV.Groups(items)
+        self.queue, self.memory_queue, self.seq_pos, self._next = [], [], None, None
+        self.hover_i = self.hover_group = None
+        if self.coll_filter and not any(it.collection == self.coll_filter for it in items):
+            self.coll_filter = None
+        if not items:
+            self.hero = self.morph_i = 0
+            return
+        if hero_key in idx:
+            self.hero = self.morph_i = idx[hero_key]
+            if self.mode == FRAME:
+                self.jump_camera(*self.plane.cell_center(self.hero), self.frame_scale())
+        else:
+            # La foto en pantalla ya no está (o no había ninguna): empieza con otra.
+            first = next((i for i, it in enumerate(items) if it.key in self.new_keys), 0)
+            self.hero = self.morph_i = first
+            if first in self.kb:
+                del self.kb[first]
+            self.go_frame(first, now)
+            self.m, self.m_tween = 1.0, None
+            self.jump_camera(*self.plane.cell_center(first), self.frame_scale())
 
     # ------------------------------------------------------------------ actualización
 
@@ -1161,6 +1277,7 @@ class App:
         if self.fade:
             self.draw_fade(now)
         self.draw_chrome(now)
+        self.draw_toast(now)
 
     def draw_tiles(self, tx, ty, s, alpha, bg):
         g = self.gfx
@@ -1335,7 +1452,7 @@ class App:
             if frame_amt > 0.01:
                 top = self.vh - 104
                 if st.show_info:
-                    g.label(item.collection or "Fotos", 56 + dx, self.vh - 104 + dy, 26, frame_amt, bold=True)
+                    g.label(item.collection or tr("Fotos"), 56 + dx, self.vh - 104 + dy, 26, frame_amt, bold=True)
                     g.label(item.date_text, 56 + dx, self.vh - 68 + dy, 16, frame_amt)
                 else:
                     top = self.vh - 68
@@ -1346,21 +1463,35 @@ class App:
             if in_frame:
                 left = self.hint_until - now
                 a = min(1.0, max(0.0, left / 0.8)) * min(1.0, max(0.0, (now - self.frame_since - 1.0) / 0.6))
-                g.pill("Mueve el mouse para explorar", self.vw / 2, self.vh - 84, 14, a)
+                g.pill(tr("Mueve el mouse para explorar"), self.vw / 2, self.vh - 84, 14, a)
         if self.mode == GRID:
             self.draw_grid_chrome(now, 1.0 - self.m)
         if self.mode == VIEWER and self.m > 0.01:
             self.draw_viewer_chrome(now)
         p = self.processor
-        if p and p.done < len(self.items) and not in_frame:
-            label = f"Preparando fotos {p.done}/{len(self.items)}"
+        if p and p.busy and not in_frame:
+            label = tr("Preparando fotos {done}/{total}", done=p.done, total=p.total)
             w = g.tsize(g.text(label, 13, C.TEXT, True))[0] + 36
             g.pill(label, self.vw - 24 - w, self.vh - 128, 13, 1.0, anchor="left")
+
+    def draw_toast(self, now):
+        if not self.toast:
+            return
+        text, t0 = self.toast
+        age = now - t0
+        if age > 4.5:
+            self.toast = None
+            return
+        a = min(1.0, age / 0.35, (4.5 - age) / 0.6)
+        with TH.using(TH.DARK if self.mode == FRAME else T):
+            g = self.gfx
+            w = g.tsize(g.text(text, 14, T.text, True))[0] + 36
+            g.pill(text, self.vw / 2, 24 + (1 - EASE(min(1.0, age / 0.35))) * -12, 14, a)
 
     def clock_text(self):
         t = time.localtime()
         if self.settings.clock == "12":
-            return f"{t.tm_hour % 12 or 12}:{t.tm_min:02d}", ("a. m." if t.tm_hour < 12 else "p. m.")
+            return f"{t.tm_hour % 12 or 12}:{t.tm_min:02d}", I18N.ampm(t.tm_hour)
         return f"{t.tm_hour}:{t.tm_min:02d}", None
 
     def draw_clock(self, right, bottom, alpha, size=48):
@@ -1380,7 +1511,7 @@ class App:
     def draw_memory_tag(self, label, x, y, alpha):
         """Etiqueta pequeña de "Un día como hoy"."""
         g = self.gfx
-        t = g.text(f"Un día como hoy  ·  {label}", 13, (255, 255, 255), True)
+        t = g.text(tr("Un día como hoy  ·  {label}", label=label), 13, (255, 255, 255), True)
         tw, th = g.tsize(t)
         w, h = tw + 28, 28
         g.round_rect(x, y, w, h, (255, 255, 255, 46), alpha, h / 2)
@@ -1474,11 +1605,11 @@ class App:
         g.rect(0, BAR_H - 1, self.vw, 1, T.hairline, T.hairline_alpha * a)
         self.ui_rects.append((0, 0, self.vw, BAR_H))
         y = (BAR_H - 44) / 2
-        r = g.button("Presentación", 24, y, alpha=a, icon="play")
+        r = g.button(tr("Presentación"), 24, y, alpha=a, icon="play")
         self.hit(r, self.start_presentation)
-        options = [(YEARS, "Años"), (MONTHS, "Meses"), (PHOTOS, "Fotos")]
+        options = [(YEARS, tr("Años")), (MONTHS, tr("Meses")), (PHOTOS, tr("Fotos"))]
         if self.groups.coll_list:
-            options.append((COLLS, "Colecciones"))
+            options.append((COLLS, tr("Colecciones")))
         disabled = () if self.groups.has_years else (YEARS,)
         seg_x = r[0] + r[2] + 12
         segs, total = g.segmented(options, self.lvl, seg_x, y, alpha=a, disabled=disabled)
@@ -1488,7 +1619,7 @@ class App:
         if self.coll_filter:
             fr = g.button(f"{self.coll_filter}  ×", seg_x + total + 12, y + 6, h=32, alpha=a, active=True, size=13, pad=14)
             self.hit(fr, lambda now: self.set_filter(None))
-        label = "Ajustes"
+        label = tr("Ajustes")
         w = g.tsize(g.text(label, 14, C.TEXT, True))[0] + 36
         sr = g.button(label, self.vw - 24 - w, y, alpha=a)
         self.hit(sr, self.open_settings)
@@ -1497,14 +1628,14 @@ class App:
             n = sum(1 for i in range(len(self.items)) if self.matches(i))
             cols = self.vw / ((C.CELL + C.GAP) * C.ZOOMS[self.zi])
             cols_txt = f"{cols:.0f}" if abs(cols - round(cols)) < 0.05 else f"{cols:.1f}"
-            main = f"{n} fotos" + (f" en {self.coll_filter}" if self.coll_filter else "")
-            sub = f"· {cols_txt} columnas"
+            main = tr("{n} fotos en {c}", n=n, c=self.coll_filter) if self.coll_filter else tr("{n} fotos", n=n)
+            sub = tr("· {c} columnas", c=cols_txt)
         elif self.lvl == MONTHS:
-            main, sub = "Meses", f"· {len(self.groups.months)} con fotos"
+            main, sub = tr("Meses"), tr("· {n} con fotos", n=len(self.groups.months))
         elif self.lvl == YEARS:
-            main, sub = "Años", f"· {len(self.groups.year_list)}"
+            main, sub = tr("Años"), f"· {len(self.groups.year_list)}"
         else:
-            main, sub = "Colecciones", f"· {len(self.groups.coll_list)}"
+            main, sub = tr("Colecciones"), f"· {len(self.groups.coll_list)}"
         g.pill(main, 24, self.vh - 64, 13, a, anchor="left", sublabel=sub)
         bx, by = self.vw - 24 - 104, self.vh - 68
         g.round_rect(bx, by, 104, 44, T.pill, a)
@@ -1563,9 +1694,9 @@ class App:
         sel = self.items[self.current_viewer_index()]
         sub = f"· {sel.collection}" if sel.collection else None
         g.pill(sel.date_text, self.vw / 2, self.vh - 66, 14, a, sublabel=sub)
-        r = g.pill("‹  Volver", 24, 24, 14, a, anchor="left")
+        r = g.pill(tr("‹  Volver"), 24, 24, 14, a, anchor="left")
         self.hit(r, self.close_viewer)
-        label = "Presentación desde aquí"
+        label = tr("Presentación desde aquí")
         w = g.tsize(g.text(label, 14, C.TEXT, True))[0] + 36 + 22
         r2 = g.button(label, self.vw - 24 - w, 24, h=40, alpha=a, icon="play")
         self.hit(r2, lambda now: self.go_frame(self.current_viewer_index(), now))
@@ -1584,16 +1715,16 @@ class App:
 
     def draw_settings(self, now):
         g = self.gfx
-        w, h = 620, 640
+        w, h = 620, 680
         h = min(h, self.vh - 40)
         x, y = (self.vw - w) / 2, (self.vh - h) / 2
         g.round_rect(x, y, w, h, T.panel, 1.0, 28)
         self.ui_rects.append((x, y, w, h))
         self.hits.append(((x, y, w, h), lambda now: None))  # clics dentro del panel no lo cierran
-        g.label("Ajustes", x + 28, y + 24, 22, bold=True)
-        done = g.button("Listo", x + w - 28 - 76, y + 20, h=36, active=True, size=14, pad=18)
+        g.label(tr("Ajustes"), x + 28, y + 24, 22, bold=True)
+        done = g.button(tr("Listo"), x + w - 28 - 76, y + 20, h=36, active=True, size=14, pad=18)
         self.hit(done, lambda now: self.close_settings(now))
-        tabs = [("show", "Presentación"), ("screen", "Pantalla")]
+        tabs = [("show", tr("Presentación")), ("screen", tr("Pantalla")), ("phone", tr("Celular"))]
         tw_ = sum(g.tsize(g.text(lbl, 13, T.text, True))[0] + 28 for _, lbl in tabs) + 6
         tsegs, _ = g.segmented(tabs, self.settings_tab, x + (w - tw_) / 2, y + 74, h=36)
         for val, rect in tsegs:
@@ -1604,11 +1735,12 @@ class App:
 
         def row(title, sub):
             g.rect(x + 28, ry[0] - 14, w - 56, 1, T.hairline, T.hairline_alpha)
-            g.label(title, x + 28, ry[0], 15, bold=True)
-            g.label(sub, x + 28, ry[0] + 22, 13, color=T.text_secondary)
+            g.label(tr(title), x + 28, ry[0], 15, bold=True)
+            g.label(tr(sub), x + 28, ry[0] + 22, 13, color=T.text_secondary)
 
         def choice(title, sub, attr, opts, enabled=True, on_change=None):
             row(title, sub)
+            opts = [(k, tr(lbl)) for k, lbl in opts]
             seg_w = sum(g.tsize(g.text(lbl, 13, T.text, True))[0] + 28 for _, lbl in opts) + 6
             segs, _ = g.segmented(opts, getattr(st, attr), right - seg_w, ry[0], h=40,
                                   alpha=1.0 if enabled else 0.35)
@@ -1644,7 +1776,8 @@ class App:
             switch("Orden aleatorio", "Mezcla las fotos", "shuffle", reset_queue)
             choice("Volver a la presentación", "Sin mover el mouse", "idle_seconds",
                    [(10, "10 s"), (15, "15 s"), (30, "30 s"), (60, "1 min")])
-        else:
+        elif self.settings_tab == "screen":
+            choice("Idioma", "Español o inglés", "language", I18N.LANGS, on_change=self.apply_language)
             choice("Apariencia", "Automático: claro de día", "theme",
                    [("light", "Claro"), ("dark", "Oscuro"), ("auto", "Automático")], on_change=self.apply_theme)
             if self.sensor.available:
@@ -1656,7 +1789,7 @@ class App:
             choice("Modo noche", subs.get(st.night, ""), "night",
                    [(NIGHT.NEVER, "Nunca"), (NIGHT.SCHEDULE, "Por horario"), (NIGHT.LIGHT, "Por la luz")])
             choice("Horario", "De noche a mañana", "night_hours",
-                   [("22-7", "22:00 a 7:00"), ("23-7", "23:00 a 7:00"), ("0-6", "0:00 a 6:00")],
+                   [("22-7", "22:00–7:00"), ("23-7", "23:00–7:00"), ("0-6", "0:00–6:00")],
                    enabled=st.night == NIGHT.SCHEDULE)
             choice("De noche", "Qué se ve en la pantalla", "night_style",
                    [("off", "Apagada"), ("window", "Reloj ventana"), ("classic", "Reloj clásico")],
@@ -1664,17 +1797,100 @@ class App:
             choice("Color del reloj clásico", "Rojo: el que menos molesta", "night_color",
                    [("white", "Blanco"), ("blue", "Azul"), ("red", "Rojo")],
                    enabled=st.night != NIGHT.NEVER and st.night_style == "classic")
-            g.label("Tecla N: simula la noche para probarlo", x + 28, ry[0] - 4, 12, color=T.text_secondary)
+            g.label(tr("Tecla N: simula la noche para probarlo"), x + 28, ry[0] - 4, 12, color=T.text_secondary)
+        else:
+            self.draw_phone_tab(x, y + 130, w)
 
         g.rect(x + 28, y + h - 64, w - 56, 1, T.hairline, T.hairline_alpha)
         g.label(f"Vitrina {__version__}  ·  github.com/Danzelote/Vitrina", x + 28, y + h - 48, 12, color=T.text_secondary)
-        g.label("Apoya el proyecto en ko-fi.com/danzelot", x + 28, y + h - 30, 12, color=T.text_secondary)
+        g.label(tr("Apoya el proyecto en ko-fi.com/danzelot"), x + 28, y + h - 30, 12, color=T.text_secondary)
 
     def draw_empty_library(self):
         g = self.gfx
-        g.label_centered("No hay fotos todavía", self.vw / 2, self.vh / 2 - 40, 28, bold=True)
-        g.label_centered("Corre Vitrina con --folder y una carpeta de fotos, o con --demo",
-                         self.vw / 2, self.vh / 2 + 6, 16, color=T.text_dim)
+        url = self.web.pair_url() if self.web else None
+        qr = self.qr_texture(url) if url else None
+        if qr:
+            size = 220
+            qx, qy = self.vw / 2 - size / 2, self.vh / 2 - 210
+            g.round_rect(qx - 14, qy - 14, size + 28, size + 28, (255, 255, 255, 255), 1.0, 22)
+            qr.draw(dstrect=(qx, qy, size, size))
+            top = qy + size + 44
+            sub = tr("Escanea el código con el celular para agregar fotos")
+        else:
+            top = self.vh / 2 - 40
+            sub = tr("Conecta la Mac al WiFi para usar el celular.") if self.web else \
+                "python app/main.py --folder ~/Pictures/Vitrina"
+        g.label_centered(tr("No hay fotos todavía"), self.vw / 2, top, 28, bold=True)
+        g.label_centered(sub, self.vw / 2, top + 46, 16, color=T.text_dim)
+        if qr:
+            g.label_centered(tr("El celular y la Mac deben estar en el mismo WiFi."), self.vw / 2, top + 72, 14,
+                             color=T.text_secondary)
+
+    def qr_texture(self, url):
+        """El código QR de `url` como textura (se genera una vez por dirección)."""
+        cache = getattr(self, "_qr", None)
+        if cache and cache[0] == url:
+            return cache[1]
+        try:
+            import segno
+        except ImportError:
+            self._qr = (url, None)
+            return None
+        rows = [list(r) for r in segno.make(url, error="m", boost_error=False).matrix]
+        n = len(rows)
+        cell = max(4, 600 // n)
+        surf = pygame.Surface((n * cell, n * cell))
+        surf.fill((255, 255, 255))
+        for yy, row in enumerate(rows):
+            for xx, on in enumerate(row):
+                if on:
+                    surf.fill((17, 17, 17), (xx * cell, yy * cell, cell, cell))
+        tex = Texture.from_surface(self.ren, surf)
+        self._qr = (url, tex)
+        return tex
+
+    def draw_phone_tab(self, x, y, w):
+        """Ajustes → Celular: el código para emparejar y los celulares conectados."""
+        g = self.gfx
+        if not self.web:
+            g.label(tr("Sin conexión a la red"), x + 28, y + 20, 15, bold=True)
+            return
+        url = self.web.pair_url()
+        qr = self.qr_texture(url) if url else None
+        size = 184
+        qx, qy = x + 28, y + 6
+        if qr:
+            g.round_rect(qx, qy, size, size, (255, 255, 255, 255), 1.0, 16)
+            qr.draw(dstrect=(qx + 12, qy + 12, size - 24, size - 24))
+        else:
+            g.round_rect(qx, qy, size, size, T.button, 1.0, 16)
+        tx = qx + size + 24
+        g.label(tr("Agregar fotos desde el celular"), tx, qy + 16, 17, bold=True)
+        if url and not qr:
+            msg = [tr("Falta instalar segno (pip install -r requirements.txt)")]
+        elif url:
+            msg = [tr("Escanea el código con la cámara del celular"),
+                   tr("El celular y la Mac deben estar en el mismo WiFi.")]
+        else:
+            msg = [tr("Sin conexión a la red"), tr("Conecta la Mac al WiFi para usar el celular.")]
+        for k, line in enumerate(msg):
+            g.label(line, tx, qy + 50 + k * 22, 13, color=T.text_secondary)
+        if url:
+            g.label(url.split("/p/")[0].replace("http://", ""), tx, qy + size - 26, 13, color=T.text_dim)
+        # Celulares conectados
+        ly = qy + size + 34
+        g.label(tr("Celulares conectados"), x + 28, ly, 15, bold=True)
+        devices = self.web.devices.listing()
+        ly += 34
+        if not devices:
+            g.label(tr("Ninguno todavía"), x + 28, ly, 13, color=T.text_secondary)
+        for h, name, added in devices[:4]:
+            g.rect(x + 28, ly - 10, w - 56, 1, T.hairline, T.hairline_alpha)
+            g.label(name, x + 28, ly + 2, 14, bold=True)
+            g.label(I18N.long_date(datetime.fromtimestamp(added)), x + 28 + 110, ly + 4, 13, color=T.text_secondary)
+            r = g.button(tr("Quitar"), x + w - 28 - 90, ly - 4, h=32, size=13, pad=14)
+            self.hit(r, lambda now, h=h: self.web.devices.remove(h))
+            ly += 46
 
     # ------------------------------------------------------------------ ciclo
 
@@ -1682,6 +1898,7 @@ class App:
         now = time.monotonic() if now is None else now
         for e in pygame.event.get():
             self.handle(e, now)
+        self.poll_events(now)
         if self.items:
             self.update(now)
         self.draw(now)

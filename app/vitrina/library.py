@@ -14,6 +14,7 @@ import re
 import shutil
 import subprocess
 import threading
+from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
 
@@ -81,7 +82,8 @@ class Item:
 
     @property
     def date_text(self):
-        return f"{self.date.day} de {MONTHS[self.date.month - 1]} de {self.date.year}"
+        from .i18n import long_date
+        return long_date(self.date)
 
 
 def _date_from_exif(img):
@@ -132,48 +134,86 @@ def probe(path):
     return dur, date
 
 
+def media_kind(name):
+    """'image', 'video' o None según la extensión (los videos necesitan ffmpeg)."""
+    ext = os.path.splitext(name)[1].lower()
+    if name.startswith("."):
+        return None
+    if ext in C.IMAGE_EXTS:
+        return "image"
+    if ext in C.VIDEO_EXTS and FFMPEG and FFPROBE:
+        return "video"
+    return None
+
+
+def item_key(path, size, mtime):
+    """Identificador estable de un archivo: no cambia si se mueve de colección."""
+    return hashlib.sha1(f"{os.path.basename(path)}|{size}|{int(mtime)}".encode()).hexdigest()[:16]
+
+
+def collection_of(folder, path):
+    rel = os.path.relpath(os.path.dirname(path), folder)
+    return "" if rel == "." else rel.split(os.sep)[0]
+
+
+def scan_file(folder, path):
+    """Un Item para el archivo `path` dentro de `folder`, o None si no sirve."""
+    name = os.path.basename(path)
+    kind = media_kind(name)
+    if not kind:
+        return None
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    date, duration = None, 0.0
+    if kind == "video":
+        duration, date = probe(path)
+        if duration <= 0:
+            return None
+    else:
+        try:
+            with Image.open(path) as img:
+                date = _date_from_exif(img)
+        except Exception:
+            return None
+    date = date or _date_from_name(name) or datetime.fromtimestamp(st.st_mtime)
+    return Item(path=path, collection=collection_of(folder, path), date=date,
+                key=item_key(path, st.st_size, st.st_mtime), is_video=kind == "video", duration=duration)
+
+
 def scan(folder):
     """Lista las fotos de `folder` (incluye subcarpetas), de la más reciente a
-    la más antigua. Cada subcarpeta de primer nivel es una colección."""
+    la más antigua. Cada subcarpeta de primer nivel es una colección. Las
+    carpetas que empiezan con punto (por ejemplo la papelera) se ignoran."""
     folder = os.path.abspath(os.path.expanduser(folder))
     items = []
-    for root, _dirs, files in os.walk(folder):
-        rel = os.path.relpath(root, folder)
-        collection = "" if rel == "." else rel.split(os.sep)[0]
+    for root, dirs, files in os.walk(folder):
+        dirs[:] = [d for d in dirs if not d.startswith(".")]
         for name in sorted(files):
-            ext = os.path.splitext(name)[1].lower()
-            is_video = ext in C.VIDEO_EXTS
-            if name.startswith(".") or not (ext in C.IMAGE_EXTS or (is_video and FFMPEG and FFPROBE)):
-                continue
-            path = os.path.join(root, name)
-            try:
-                st = os.stat(path)
-            except OSError:
-                continue
-            date, duration = None, 0.0
-            if is_video:
-                duration, date = probe(path)
-                if duration <= 0:
-                    continue
-            else:
-                try:
-                    with Image.open(path) as img:
-                        date = _date_from_exif(img)
-                except Exception:
-                    continue
-            date = date or _date_from_name(name) or datetime.fromtimestamp(st.st_mtime)
-            key = hashlib.sha1(f"{path}|{st.st_size}|{int(st.st_mtime)}".encode()).hexdigest()[:16]
-            items.append(Item(path=path, collection=collection, date=date, key=key,
-                              is_video=is_video, duration=duration))
+            it = scan_file(folder, os.path.join(root, name))
+            if it:
+                items.append(it)
     items.sort(key=lambda it: it.date, reverse=True)
     return items
 
 
+def collections_on_disk(folder):
+    """Nombres de las colecciones (subcarpetas), aunque estén vacías."""
+    try:
+        return sorted(d for d in os.listdir(folder)
+                      if not d.startswith(".") and os.path.isdir(os.path.join(folder, d)))
+    except OSError:
+        return []
+
+
 class Processor:
-    """Genera en un hilo aparte las versiones en caché de cada foto."""
+    """Genera en un hilo aparte las versiones en caché de cada foto. Se le
+    pueden agregar fotos en cualquier momento (por ejemplo, al subirlas desde
+    el celular)."""
 
     def __init__(self, items):
-        self.items = items
+        self.items = list(items)
         self.dir = os.path.join(cache_dir(), "img")
         os.makedirs(self.dir, exist_ok=True)
         self.meta_path = os.path.join(cache_dir(), "meta.json")
@@ -183,53 +223,93 @@ class Processor:
         except Exception:
             self.meta = {}
         self._lock = threading.Lock()
+        self._cv = threading.Condition()
+        self._photos = deque()
+        self._videos = deque()
         self._thread = threading.Thread(target=self._run, daemon=True)
         self.done = 0
+        self.total = 0
+        self.videos_total = 0
+        self.videos_done = 0
+
+    def _prepare(self, it):
+        it.thumb_path = os.path.join(self.dir, it.key + "_t.jpg")
+        it.screen_path = os.path.join(self.dir, it.key + "_s.jpg")
+        it.backdrop_path = os.path.join(self.dir, it.key + "_b.jpg")
+        it.video_path = os.path.join(self.dir, it.key + "_v.mp4")
+        it.preview_path = os.path.join(self.dir, it.key + "_p.mp4")
+        m = self.meta.get(it.key)
+        if m and os.path.exists(it.thumb_path) and os.path.exists(it.screen_path):
+            it.width, it.height = m[0], m[1]
+            it.ready = True
+        if it.is_video and os.path.exists(it.video_path) and os.path.exists(it.preview_path):
+            it.video_ready = True
+        self.total += 1
+        if it.ready:
+            self.done += 1
+        else:
+            self._photos.append(it)
+        if it.is_video:
+            self.videos_total += 1
+            if it.video_ready:
+                self.videos_done += 1
+            else:
+                self._videos.append(it)
 
     def start(self):
-        for it in self.items:
-            it.thumb_path = os.path.join(self.dir, it.key + "_t.jpg")
-            it.screen_path = os.path.join(self.dir, it.key + "_s.jpg")
-            it.backdrop_path = os.path.join(self.dir, it.key + "_b.jpg")
-            it.video_path = os.path.join(self.dir, it.key + "_v.mp4")
-            it.preview_path = os.path.join(self.dir, it.key + "_p.mp4")
-            m = self.meta.get(it.key)
-            if m and os.path.exists(it.thumb_path) and os.path.exists(it.screen_path):
-                it.width, it.height = m[0], m[1]
-                it.ready = True
-                self.done += 1
-            if it.is_video and os.path.exists(it.video_path) and os.path.exists(it.preview_path):
-                it.video_ready = True
-        self.videos_total = sum(1 for it in self.items if it.is_video)
-        self.videos_done = sum(1 for it in self.items if it.video_ready)
+        with self._cv:
+            for it in self.items:
+                self._prepare(it)
         self._thread.start()
+
+    def add(self, items):
+        """Agrega fotos nuevas a la cola (llamar desde la interfaz)."""
+        with self._cv:
+            for it in items:
+                self.items.append(it)
+                self._prepare(it)
+            self._cv.notify()
+
+    @property
+    def busy(self):
+        return self.done < self.total
 
     def _run(self):
         changed = 0
-        # Primero las imágenes (y las portadas de los videos): la cuadrícula se llena rápido.
-        for it in self.items:
-            if it.ready:
-                continue
-            try:
-                self._process(it)
-                it.ready = True
-                with self._lock:
-                    self.meta[it.key] = [it.width, it.height]
-                changed += 1
-                if changed % 25 == 0:
-                    self._save_meta()
-            except Exception:
-                it.failed = True
-            self.done += 1
-        self._save_meta()
-        # Después, la versión ligera de cada video (lo más lento).
-        for it in self.items:
-            if it.is_video and it.ready and not it.video_ready:
+        while True:
+            with self._cv:
+                while not self._photos and not self._videos and not changed:
+                    self._cv.wait()
+                if self._photos:
+                    stage, it = "photo", self._photos.popleft()
+                elif self._videos:
+                    stage, it = "video", self._videos.popleft()
+                else:
+                    stage, it = None, None
+            if it is None:          # cola vacía: guarda lo hecho y espera
+                self._save_meta()
+                changed = 0
+            elif stage == "photo":
+                # Primero las imágenes (y las portadas de los videos): la cuadrícula se llena rápido.
                 try:
-                    self._transcode(it)
-                    it.video_ready = True
+                    self._process(it)
+                    it.ready = True
+                    with self._lock:
+                        self.meta[it.key] = [it.width, it.height]
+                    changed += 1
+                    if changed % 25 == 0:
+                        self._save_meta()
                 except Exception:
-                    pass
+                    it.failed = True
+                self.done += 1
+            else:
+                # Después, la versión ligera de cada video (lo más lento).
+                if it.ready and not it.failed and os.path.exists(it.path):
+                    try:
+                        self._transcode(it)
+                        it.video_ready = True
+                    except Exception:
+                        pass
                 self.videos_done += 1
 
     def _poster(self, it):

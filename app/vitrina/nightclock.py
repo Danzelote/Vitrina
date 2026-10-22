@@ -14,6 +14,8 @@ import time
 import pygame
 from pygame._sdl2.video import Texture
 
+from .i18n import weekday_abbr
+
 FONT_DIR = os.path.join(os.path.dirname(__file__), "fonts")
 ROUND = os.path.join(FONT_DIR, "Fredoka-Bold.ttf")
 TALL = os.path.join(FONT_DIR, "BebasNeue-Regular.ttf")
@@ -21,7 +23,6 @@ TALL = os.path.join(FONT_DIR, "BebasNeue-Regular.ttf")
 WINDOW_HEIGHT = 0.46    # alto de los números de la ventana (fracción de la pantalla)
 CLASSIC_HEIGHT = 0.62   # alto de los números del clásico
 COLORS = {"white": (236, 236, 240), "blue": (134, 168, 236), "red": (214, 74, 60)}
-DAYS = ["LUN", "MAR", "MIÉ", "JUE", "VIE", "SÁB", "DOM"]
 
 
 class Glyphs:
@@ -123,7 +124,7 @@ def draw_classic(g, glyphs, text, vw, vh, dpi, color_key, alpha, drift=(0, 0), H
     time_w = x - H * 0.035
     t = time.localtime()
     side_h = H * 0.13
-    day, num = DAYS[t.tm_wday], str(t.tm_mday)
+    day, num = weekday_abbr(t.tm_wday), str(t.tm_mday)
     side = []
     sx = 0.0
     for s, c in ((day, color), (num, (236, 236, 240))):

@@ -25,5 +25,5 @@ def on_this_day(items, indices, today):
 
 
 def years_ago(d, today):
-    n = today.year - d.year
-    return "Hace 1 año" if n == 1 else f"Hace {n} años"
+    from .i18n import years_ago as text
+    return text(today.year - d.year)

@@ -6,11 +6,9 @@ con su mini presentación. Las coordenadas aquí son de pantalla (puntos)."""
 from dataclasses import dataclass, field
 
 from . import config as C
+from . import i18n as I18N
 from .theme import T
 
-MONTH_ABBR = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"]
-MONTH_NAMES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto",
-               "septiembre", "octubre", "noviembre", "diciembre"]
 
 # Calendario de meses
 M_TILE = 164
@@ -41,10 +39,6 @@ class Tile:
     size: float
     title: str
     sub: str
-
-
-def plural(n, one="foto", many="fotos"):
-    return f"{n:,} {one if n == 1 else many}".replace(",", ",")
 
 
 class Groups:
@@ -95,15 +89,15 @@ class Groups:
             top = ty + yi * M_BLOCK
             if top > vh or top + M_BLOCK < 0:
                 continue
-            labels.append((str(y), plural(len(self.years[y].members)), x0, top + 6))
+            labels.append((str(y), I18N.photos(len(self.years[y].members)), x0, top + 6))
             for m in range(12):
                 x = x0 + M_LABEL_W + (m % 6) * M_PITCH
                 yy = top + (m // 6) * M_PITCH
                 g = self.months.get((y, m + 1))
                 if g:
-                    tiles.append(Tile(g, x, yy, M_TILE, MONTH_ABBR[m], plural(len(g.members))))
+                    tiles.append(Tile(g, x, yy, M_TILE, I18N.month_abbr(m), I18N.photos(len(g.members))))
                 else:
-                    empty.append((MONTH_ABBR[m], x, yy, M_TILE))
+                    empty.append((I18N.month_abbr(m), x, yy, M_TILE))
         return labels, tiles, empty
 
     # -- años y colecciones ----------------------------------------------------
@@ -122,7 +116,7 @@ class Groups:
 
     def year_tiles(self, vw, vh):
         pos = self.grid_layout(len(self.year_list), vw, vh)
-        return [Tile(self.years[y], x, yy, s, str(y), plural(len(self.years[y].members)))
+        return [Tile(self.years[y], x, yy, s, str(y), I18N.photos(len(self.years[y].members)))
                 for y, (x, yy, s) in zip(self.year_list, pos)]
 
     def coll_tiles(self, vw, vh):
@@ -130,7 +124,7 @@ class Groups:
         out = []
         for k, (x, yy, s) in zip(self.coll_list, pos):
             inset = 14  # deja ver las "tarjetas" de atrás
-            out.append(Tile(self.colls[k], x, yy + inset, s - inset, k, plural(len(self.colls[k].members))))
+            out.append(Tile(self.colls[k], x, yy + inset, s - inset, k, I18N.photos(len(self.colls[k].members))))
         return out
 
 
