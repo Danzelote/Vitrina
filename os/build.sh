@@ -114,6 +114,8 @@ for unit in apt-daily.timer apt-daily-upgrade.timer man-db.timer e2scrub_all.tim
     in_root systemctl mask "$unit" >/dev/null 2>&1 || true
 done
 in_root systemctl enable NetworkManager systemd-timesyncd vitrina-isight >/dev/null 2>&1 || true
+in_root systemctl enable vitrina.service
+in_root systemctl mask getty@tty1.service
 # Logo de arranque (queda dentro del initramfs al regenerarlo abajo)
 in_root plymouth-set-default-theme vitrina
 # Sin textos al entrar: ni el mensaje del día ni "último acceso"

@@ -19,7 +19,7 @@ echo "Aceleración: ${ACCEL:-ninguna}"
 
 qemu-system-x86_64 $ACCEL -m 2048 -smp 2 -cdrom "$ISO" \
     -kernel "$DIR/vmlinuz" -initrd "$DIR/initrd.img" \
-    -append "boot=live quiet splash console=ttyS0,115200 systemd.journald.forward_to_console=1" \
+    -append "boot=live quiet splash plymouth.ignore-serial-consoles console=ttyS0,115200 systemd.journald.forward_to_console=1" \
     -vga std -display none -serial "file:$LOG" -monitor "unix:$MON,server,nowait" \
     -nic user,model=e1000 &
 QEMU=$!

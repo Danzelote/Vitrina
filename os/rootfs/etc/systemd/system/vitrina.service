@@ -1,0 +1,27 @@
+# Abre Vitrina en la primera pantalla, sin consola de por medio: así no se ve
+# ningún texto ("vitrina login…") entre el logo de arranque y la app.
+[Unit]
+Description=Vitrina
+After=systemd-user-sessions.service plymouth-quit-wait.service network.target
+Conflicts=getty@tty1.service
+Before=getty.target
+
+[Service]
+User=vitrina
+WorkingDirectory=/home/vitrina
+PAMName=login
+TTYPath=/dev/tty1
+TTYReset=no
+TTYVHangup=yes
+TTYVTDisallocate=no
+StandardInput=tty
+StandardOutput=journal
+StandardError=journal
+UtmpIdentifier=tty1
+UtmpMode=user
+ExecStart=/usr/bin/startx /opt/vitrina/xinitrc -- -quiet -nolisten tcp -background none vt1
+Restart=always
+RestartSec=1
+
+[Install]
+WantedBy=graphical.target multi-user.target
