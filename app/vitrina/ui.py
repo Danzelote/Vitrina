@@ -56,7 +56,8 @@ THEME_TIME = 0.7       # cambio gradual entre tema claro y oscuro
 BAR_H = 72
 HUD_IN, HUD_HOLD, HUD_OUT = 0.15, 1.4, 0.35   # píldora de volumen y brillo
 # Teclas de volumen y brillo (códigos de SDL; pygame no les pone nombre).
-ENTER_EASE = cubic_bezier(0.7, 0.0, 0.3, 1.0)    # la ventanita del logo crece hasta llenar la pantalla
+ENTER_EASE = cubic_bezier(0.7, 0.0, 0.3, 1.0)
+SHUT_SHRINK, SHUT_SPLIT = 1.0, 0.7    # apagar: la pantalla se cierra en la ventanita; luego se separa en 4    # la ventanita del logo crece hasta llenar la pantalla
 POWER_KEY = 0x40000066        # tecla de encendido (SDLK_POWER)
 MEDIA_KEYS = {0x40000080: "vol_up", 0x40000081: "vol_down", 0x4000007F: "mute", 0x40000106: "mute",
               0x40000114: "bright_up", 0x40000113: "bright_down"}
@@ -1627,6 +1628,8 @@ class App:
         self.hits = []
         self.ui_rects = []
         if self.shutting:
+            if now - self.shutting["at"] < SHUT_SHRINK:
+                self.draw_scene(now)           # la ventana se cierra sobre lo que se veía
             self.draw_shutting(now)
             return
         if self.calib:
@@ -1842,16 +1845,60 @@ class App:
         return SPL.logo_scale(k, t)
 
     def draw_shutting(self, now):
-        sh = self.shutting
+        """Apagar: el arranque al revés. La pantalla se cierra en una ventanita
+        blanca, se separa en los 4 cuadros, aparece "Vitrina OS" y los cuadros
+        siguen respirando hasta que la Mac se apaga."""
+        sh, g = self.shutting, self.gfx
+        t = now - sh["at"]
+        S = SPL.SQ
+        wx, wy = SPL.logo_origin(self.vw, self.vh)
+        cx, cy = wx + 42, wy + 42
+        sq = g.shape(round(S * 2), round(S * 2), 14)
+        white, black = (255, 255, 255), (0, 0, 0)
+        if t < SHUT_SHRINK:
+            p = t / SHUT_SHRINK
+            big = math.hypot(self.vw, self.vh) * 1.15
+            size = lerp(big, S, ENTER_EASE(p))
+            x0, y0 = math.floor(cx - size / 2), math.floor(cy - size / 2)
+            x1, y1 = math.ceil(cx + size / 2), math.ceil(cy + size / 2)
+            g.rect(0, 0, self.vw, max(0, y0), black)
+            g.rect(0, y1, self.vw, max(0, self.vh - y1), black)
+            g.rect(0, y0, max(0, x0), y1 - y0, black)
+            g.rect(x1, y0, max(0, self.vw - x1), y1 - y0, black)
+            wa = max(0.0, (p - 0.65) / 0.35)          # al final ya es la ventanita blanca
+            if wa > 0.003:
+                g.rect(x0, y0, x1 - x0, y1 - y0, black, wa)
+                sq.color, sq.alpha = white, int(255 * wa)
+                sq.draw(dstrect=(x0, y0, x1 - x0, y1 - y0))
+            return
         self.ren.draw_color = (0, 0, 0, 255)
         self.ren.clear()
-        a = min(1.0, (now - sh["at"]) / 0.4)
-        sq = self.gfx.shape(round(self.LOGO_SQ * 2), round(self.LOGO_SQ * 2), 14)
-        for x, y, size in SPL.square_rects(self.vw, self.vh, now - sh["at"]):
-            sq.color = (255, 255, 255)
-            sq.alpha = int(255 * a)
-            sq.draw(dstrect=(x, y, size, size))
-        if not sh["sent"] and now - sh["at"] > 0.5:
+        t2 = t - SHUT_SHRINK
+        homes = SPL.square_rects(self.vw, self.vh, max(0.0, t2 - SHUT_SPLIT))
+        if t2 < SHUT_SPLIT:                           # se separa en 4
+            e = EASE_IN_OUT(t2 / SHUT_SPLIT)
+            for x, y, size in homes:
+                hx = lerp(cx - S / 2, x, e)
+                hy = lerp(cy - S / 2, y, e)
+                hs = lerp(S, size, e)
+                sq.color, sq.alpha = white, 255
+                sq.draw(dstrect=(hx, hy, hs, hs))
+            name_a = max(0.0, (t2 / SHUT_SPLIT - 0.45) / 0.55)
+        else:                                         # y respira hasta apagarse
+            for x, y, size in homes:
+                sq.color, sq.alpha = white, 255
+                sq.draw(dstrect=(x, y, size, size))
+            name_a = 1.0
+        if name_a > 0.01:
+            title = g.text("Vitrina", 22, white, True)
+            sub = g.text("OS", 22, (142, 142, 147), False)
+            w1, h1 = g.tsize(title)
+            w2, _ = g.tsize(sub)
+            xx = self.vw / 2 - (w1 + 6 + w2) / 2
+            for tex, px, ww in ((title, xx, w1), (sub, xx + w1 + 6, w2)):
+                tex.alpha = int(255 * name_a)
+                tex.draw(dstrect=(px, wy + 84 + 28, ww, h1))
+        if not sh["sent"] and t > SHUT_SHRINK + SHUT_SPLIT + 0.6:
             sh["sent"] = True
             WIFI.power(sh["action"])
 
