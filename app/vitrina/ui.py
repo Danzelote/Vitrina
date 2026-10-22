@@ -94,6 +94,9 @@ class App:
         self.coll_filter = None
         self.queue = []
         self.settings_open = False
+        self.swipe = None          # cambio de foto en el visor
+        self.swipe_acc = 0.0
+        self.swipe_gesture = -1.0
         self.hits = []
         self.ui_rects = []
         self.running = True
@@ -219,7 +222,42 @@ class App:
         self.morph_to(1.0, C.MORPH_TIME, now)
         self.last_move = now
 
+    def neighbor(self, i, d):
+        """Siguiente (d=1) o anterior (d=-1) foto visible con el filtro, o None."""
+        j = i + d
+        while 0 <= j < len(self.items):
+            if self.matches(j):
+                return j
+            j += d
+        return None
+
+    def viewer_step(self, d, now):
+        if self.mode != VIEWER or self.m_tween:
+            return
+        if self.swipe:
+            self.finish_swipe()
+        j = self.neighbor(self.morph_i, d)
+        if j is None:
+            return
+        self.gfx.screen(self.items[j], force=True)
+        self.swipe = (self.morph_i, j, d, Tween((0.0,), (1.0,), 0.45, EASE, now))
+        self.last_move = now
+
+    def finish_swipe(self):
+        _a, b, _d, _tw = self.swipe
+        self.swipe = None
+        self.morph_i = self.hero = b
+        self.jump_camera(*self.plane.cell_center(b), self.view_scale())
+
+    def viewer_rect(self, i):
+        s = self.view_scale()
+        bw, bh = self.big_dims(self.items[i], VIEWER)
+        w, h = bw * s, bh * s
+        return (self.vw - w) / 2, (self.vh - h) / 2, w, h
+
     def close_viewer(self, now):
+        if self.swipe:
+            self.finish_swipe()
         self.mode = GRID
         s = self.grid_scale()
         cx, cy = cam.clamp(*self.plane.cell_center(self.morph_i), s, self.plane, self.vw, self.vh)
@@ -378,7 +416,10 @@ class App:
         elif e.type == pygame.MOUSEMOTION:
             self.on_move(e.pos[0], e.pos[1], now)
         elif e.type == pygame.MOUSEWHEEL:
-            self.on_wheel(getattr(e, "precise_y", e.y), now)
+            if self.mode == VIEWER:
+                self.on_swipe(getattr(e, "precise_x", e.x), now)
+            else:
+                self.on_wheel(getattr(e, "precise_y", e.y), now)
         elif e.type == pygame.MOUSEBUTTONUP and e.button == 1:
             self.on_click(now)
         elif e.type == pygame.WINDOWLEAVE:
@@ -409,6 +450,10 @@ class App:
         elif e.key == pygame.K_i:
             self.settings.show_info = not self.settings.show_info
             self.settings.save()
+        elif e.key == pygame.K_RIGHT:
+            self.viewer_step(1, now)
+        elif e.key == pygame.K_LEFT:
+            self.viewer_step(-1, now)
         elif e.key in (pygame.K_EQUALS, pygame.K_PLUS, pygame.K_KP_PLUS):
             self.zoom(1, now, at_mouse=False)
         elif e.key in (pygame.K_MINUS, pygame.K_KP_MINUS):
@@ -463,6 +508,23 @@ class App:
             self.wheel_acc = 0.0
             self.zoom(-1, now, from_wheel=True)
 
+    def on_swipe(self, dx, now):
+        """Deslizar con dos dedos en el visor: una foto por gesto."""
+        if now - self.wheel_last > GESTURE_GAP:
+            self.gesture_start = now
+            self.swipe_acc = 0.0
+        self.wheel_last = now
+        self.last_move = now
+        if self.swipe_gesture == self.gesture_start or dx == 0:
+            return
+        if self.swipe_acc * dx < 0:
+            self.swipe_acc = 0.0
+        self.swipe_acc += dx * self.zoom_sign
+        if abs(self.swipe_acc) >= 1.5:
+            self.viewer_step(1 if self.swipe_acc > 0 else -1, now)
+            self.swipe_acc = 0.0
+            self.swipe_gesture = self.gesture_start
+
     def on_click(self, now):
         self.last_move = now
         for rect, fn in reversed(self.hits):
@@ -508,6 +570,8 @@ class App:
                 self.m_tween = None
         if self.lvl_tween and self.lvl_tween.done(now):
             self.lvl_tween = None
+        if self.swipe and self.swipe[3].done(now):
+            self.finish_swipe()
 
         over_ui = any(inside(r, self.mx, self.my) for r in self.ui_rects)
         can_hover = self.mode == GRID and self.inside and not over_ui and not self.settings_open
@@ -527,6 +591,11 @@ class App:
 
         if self.settings_open:
             self.last_move = now
+        if self.mode == VIEWER and not self.swipe:
+            for d in (1, -1):
+                j = self.neighbor(self.morph_i, d)
+                if j is not None:
+                    self.gfx.screen(self.items[j])
         if self.mode == FRAME:
             self.update_slideshow(now)
         elif now - self.last_move > self.settings.idle_seconds:
@@ -585,7 +654,9 @@ class App:
             others = (1.0 - self.m) if self.big_kind in (FRAME, VIEWER) else 1.0
             if others * alpha > 0.003:
                 self.draw_tiles(tx, ty, s, others * alpha, bg)
-            if self.lvl == PHOTOS and not self.lvl_tween:
+            if self.swipe:
+                self.draw_swipe(now, bg)
+            elif self.lvl == PHOTOS and not self.lvl_tween:
                 self.draw_morph(tx, ty, s, bg)
         self.cluster_rects = []
         for lvl in (MONTHS, YEARS, COLLS):
@@ -651,6 +722,14 @@ class App:
         big_r = 0.0 if self.big_kind == FRAME else C.RADIUS_VIEW
         radius = lerp(C.RADIUS_GRID, big_r, self.m) * s
         self.draw_tile(item, x, y, w * s, h * s, 1.0, radius, bg, w * s > C.THUMB_SHORT_SIDE * 1.3)
+
+    def draw_swipe(self, now, bg):
+        a, b, d, tw = self.swipe
+        t = tw.value(now)[0]
+        ra, rb = self.viewer_rect(a), self.viewer_rect(b)
+        dist = (ra[2] + rb[2]) / 2 + 60
+        for i, r, off in ((a, ra, -d * t * dist), (b, rb, d * (1 - t) * dist)):
+            self.draw_tile(self.items[i], r[0] + off, r[1], r[2], r[3], 1.0, C.RADIUS_VIEW * self.view_scale(), bg, True)
 
     def draw_level(self, lvl, now, alpha, view, bg):
         g, items = self.gfx, self.items
@@ -790,7 +869,7 @@ class App:
     def draw_viewer_chrome(self, now):
         g = self.gfx
         a = self.m
-        sel = self.items[self.morph_i]
+        sel = self.items[self.swipe[1] if self.swipe else self.morph_i]
         sub = f"· {sel.collection}" if sel.collection else None
         g.pill(sel.date_text, self.vw / 2, self.vh - 66, 14, a, sublabel=sub)
         r = g.pill("‹  Volver", 24, 24, 14, a, anchor="left")
@@ -798,7 +877,19 @@ class App:
         label = "Presentación desde aquí"
         w = g.tsize(g.text(label, 14, C.TEXT, True))[0] + 36 + 22
         r2 = g.button(label, self.vw - 24 - w, 24, h=40, alpha=a, icon="play")
-        self.hit(r2, lambda now: self.go_frame(self.morph_i, now))
+        self.hit(r2, lambda now: self.go_frame(self.swipe[1] if self.swipe else self.morph_i, now))
+        cur = self.swipe[1] if self.swipe else self.morph_i
+        for d, x in ((-1, 24), (1, self.vw - 24 - 48)):
+            if self.neighbor(cur, d) is None:
+                continue
+            y = self.vh / 2 - 24
+            g.round_rect(x, y, 48, 48, (44, 44, 48, 210), a)
+            cx, cy = x + 24, y + 24
+            if d < 0:
+                g.triangle(((cx + 4, cy - 9), (cx + 4, cy + 9), (cx - 7, cy)), C.TEXT, a)
+            else:
+                g.triangle(((cx - 4, cy - 9), (cx - 4, cy + 9), (cx + 7, cy)), C.TEXT, a)
+            self.hit((x, y, 48, 48), lambda now, d=d: self.viewer_step(d, now))
 
     def draw_settings(self, now):
         g = self.gfx

@@ -71,6 +71,7 @@ Al alejarte más allá del zoom mínimo, las fotos se agrupan (zoom semántico):
 ### 2.6 Visor
 
 - Al hacer clic en una foto, crece flotando sobre un fondo oscuro, con **Volver** y **Presentación desde aquí**.
+- **Pasar de foto:** deslizando con dos dedos (una foto por gesto), con las flechas del teclado o con botones redondos a los lados. Las fotos se desplazan como una tira, igual que en Fotos de Apple. Respeta el filtro de colección.
 - **Videos:** al abrirlos se reproducen de inmediato desde el inicio, sin botón de play, con una barra de pausa, progreso y duración.
 - **Sonido:** fade-in de ~0.5 s al abrir y fade-out al cerrar, pausar o volver a la presentación. Nunca corta de golpe.
 - **Vista previa en la cuadrícula:** si dejas el mouse quieto ~1.5 s sobre un video, se reproduce en miniatura y sin sonido, con barrita de progreso.
