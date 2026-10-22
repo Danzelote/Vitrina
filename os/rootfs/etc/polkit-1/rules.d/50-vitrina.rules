@@ -4,6 +4,7 @@ polkit.addRule(function (action, subject) {
         (action.id.indexOf("org.freedesktop.NetworkManager.") == 0 ||
          action.id.indexOf("org.freedesktop.login1.power-off") == 0 ||
          action.id.indexOf("org.freedesktop.login1.reboot") == 0 ||
+         action.id.indexOf("org.freedesktop.login1.suspend") == 0 ||
          action.id.indexOf("org.freedesktop.timedate1.set-timezone") == 0)) {
         return polkit.Result.YES;
     }

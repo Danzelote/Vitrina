@@ -53,6 +53,7 @@ THEME_TIME = 0.7       # cambio gradual entre tema claro y oscuro
 BAR_H = 72
 HUD_IN, HUD_HOLD, HUD_OUT = 0.15, 1.4, 0.35   # píldora de volumen y brillo
 # Teclas de volumen y brillo (códigos de SDL; pygame no les pone nombre).
+POWER_KEY = 0x40000066        # tecla de encendido (SDLK_POWER)
 MEDIA_KEYS = {0x40000080: "vol_up", 0x40000081: "vol_down", 0x4000007F: "mute", 0x40000106: "mute",
               0x40000114: "bright_up", 0x40000113: "bright_down"}
 
@@ -180,6 +181,10 @@ class App:
         self.glyphs = NC.Glyphs(self.ren)
         self.wifi = WIFI.Wifi()
         self.volume = WIFI.Volume()
+        self.power_dlg = None       # ventana de "¿Apagar la Vitrina?" (tecla de encendido o Ajustes)
+        self.power_amt = 0.0
+        self.wall_ref = (time.time(), time.monotonic())   # para notar que la Mac despertó del reposo
+        self.resumed_at = -1e9
         self.hud = None             # aviso de volumen o brillo: (tipo, nivel 0–1, silencio, inicio)
         self.wifi.refresh_status()
         self.wifi_checked = now
@@ -783,6 +788,20 @@ class App:
     def handle(self, e, now):
         if self.debug_input:
             self.debug_event(e)
+        if e.type == pygame.KEYDOWN and e.key == POWER_KEY:
+            self.last_input = now
+            if self.dark or self.night > 0.001:
+                self.woke = True
+            if WIFI.SYSTEM and now - self.resumed_at > 4:   # la tecla que la despertó no cuenta
+                if self.power_dlg:
+                    self.close_power(now)
+                else:
+                    self.open_power(now)
+            return
+        if self.power_dlg and e.type == pygame.KEYDOWN:
+            if e.key == pygame.K_ESCAPE:
+                self.close_power(now)
+            return
         if e.type == pygame.KEYDOWN and e.key in MEDIA_KEYS:
             self.media_key(MEDIA_KEYS[e.key], now)
             return
@@ -951,6 +970,9 @@ class App:
             if inside(rect, self.mx, self.my):
                 fn(now)
                 return
+        if self.power_dlg:
+            self.close_power(now)
+            return
         if self.settings_open:
             self.close_settings(now)
             return
@@ -1389,6 +1411,7 @@ class App:
             self.ren.draw_color = (0, 0, 0, 255)
             self.ren.clear()
             self.draw_night(now)
+            self.draw_power(now)
             return
         if amt > 0.001:
             # Ajustes: la escena se dibuja aparte para desenfocarla detrás del panel.
@@ -1411,6 +1434,82 @@ class App:
         else:
             self.draw_scene(now)
         self.draw_night(now)
+        self.draw_power(now)
+
+    # ------------------------------------------------------------------ apagar
+
+    def open_power(self, now):
+        if self.pw is not None:
+            self.close_password()
+        self.power_dlg = {"start": now}
+        self.show_pointer(True)
+
+    def close_power(self, now):
+        self.power_dlg = None
+
+    def power_action(self, action, now):
+        self.power_dlg = None
+        self.power_amt = 0.0
+        if action == "suspend":
+            for _i, p in list(self.players.values()):
+                try:
+                    p.set_paused(True)
+                except Exception:      # noqa: BLE001
+                    pass
+        WIFI.power(action)
+
+    def draw_power(self, now):
+        """¿Apagar la Vitrina? Reposo, apagar, reiniciar o cancelar. Aparece
+        creciendo un poco, como las ventanas de Apple."""
+        target = 1.0 if self.power_dlg else 0.0
+        self.power_amt += (target - self.power_amt) * (1 - math.exp(-self.gfx.dt / 0.07))
+        if target == 0.0 and self.power_amt < 0.01:
+            self.power_amt = 0.0
+            return
+        a = self.power_amt
+        g = self.gfx
+        self.hits, self.ui_rects = [], []           # mientras se ve, solo cuenta esta ventana
+        g.rect(0, 0, self.vw, self.vh, (0, 0, 0), 0.45 * a)
+        w = 340
+        title, sub = tr("¿Apagar la Vitrina?"), tr("En reposo, la pantalla se apaga y gasta casi nada. Despierta al abrir la tapa o con cualquier tecla.")
+        lines, cur = [], ""
+        for word in sub.split():
+            t = (cur + " " + word).strip()
+            if cur and g.tsize(g.text(t, 13, T.text_secondary))[0] > w - 56:
+                lines.append(cur)
+                cur = word
+            else:
+                cur = t
+        lines.append(cur)
+        bh, gap = 44, 10
+        h = 28 + 26 + 10 + len(lines) * 18 + 22 + 4 * bh + 3 * gap + 24
+        sc = lerp(0.94, 1.0, EASE(a))
+        cx, cy = self.vw / 2, self.vh / 2
+        w2, h2 = w * sc, h * sc
+        x, y = cx - w2 / 2, cy - h2 / 2
+        g.round_rect(x, y, w2, h2, T.panel, a, 22)
+        if a < 0.6 or not self.power_dlg:
+            return
+        ta = (a - 0.6) / 0.4
+        x, y = cx - w / 2, cy - h / 2
+        self.hits.append(((x, y, w, h), lambda now: None))     # clic dentro: no cierra
+        yy = y + 28
+        g.label_centered(title, cx, yy, 18, ta, bold=True)
+        yy += 36
+        for ln in lines:
+            g.label_centered(ln, cx, yy, 13, ta, color=T.text_secondary)
+            yy += 18
+        yy += 22
+        for label, action, active in ((tr("Reposo"), "suspend", False), (tr("Apagar"), "poweroff", True),
+                                      (tr("Reiniciar"), "reboot", False), (tr("Cancelar"), None, False)):
+            bx = x + 28
+            g.round_rect(bx, yy, w - 56, bh, T.active_bg if active else T.button, ta)
+            g.label_centered(label, cx, yy + (bh - 18) / 2, 14, ta, bold=True,
+                             color=T.active_fg if active else T.text)
+            fn = (lambda now: self.close_power(now)) if action is None else \
+                (lambda now, act=action: self.power_action(act, now))
+            self.hit((bx, yy, w - 56, bh), fn)
+            yy += bh + gap
 
     def offscreen(self, name, blend, scale=1):
         """Textura de dibujo fuera de pantalla, al tamaño real de la ventana / scale."""
@@ -2074,11 +2173,8 @@ class App:
                    [("white", "Blanco"), ("blue", "Azul"), ("red", "Rojo")],
                    enabled=st.night != NIGHT.NEVER and st.night_style == "classic")
             if WIFI.SYSTEM:
-                bx = x + 28
-                for label, action in ((tr("Apagar"), "poweroff"), (tr("Reiniciar"), "reboot")):
-                    r = g.button(label, bx, ry[0] - 10, h=36, size=13, pad=16)
-                    self.hit(r, lambda now, a=action: WIFI.power(a))
-                    bx += r[2] + 10
+                r = g.button(tr("Apagar…"), x + 28, ry[0] - 10, h=36, size=13, pad=16)
+                self.hit(r, lambda now: self.open_power(now))
             else:
                 g.label(tr("Tecla N: simula la noche para probarlo"), x + 28, ry[0] - 4, 12, color=T.text_secondary)
         elif self.settings_tab == "wifi":
@@ -2298,6 +2394,10 @@ class App:
 
     def step(self, now=None):
         now = time.monotonic() if now is None else now
+        wall = time.time()
+        if (wall - self.wall_ref[0]) - (now - self.wall_ref[1]) > 5:
+            self.on_resume(now)            # el reloj de pared avanzó y el monótono no: hubo reposo
+        self.wall_ref = (wall, now)
         for e in pygame.event.get():
             self.handle(e, now)
         self.poll_events(now)
@@ -2310,6 +2410,15 @@ class App:
             self.wifi.refresh_status()
         self.draw(now)
         self.ren.present()
+
+    def on_resume(self, now):
+        """La Mac despertó (se abrió la tapa): sigue donde se quedó."""
+        self.resumed_at = now
+        self.last_input = now
+        self.frame_since = now
+        self.wifi_checked = now - 10
+        self.woke = True
+        print("Vitrina: despertó del reposo", flush=True)
 
     def run(self):
         clock = pygame.time.Clock()

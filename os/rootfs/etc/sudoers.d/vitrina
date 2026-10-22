@@ -1,2 +1,2 @@
 # Vitrina maneja el WiFi, la hora y el apagado sin pedir contraseña (respaldo de polkit).
-vitrina ALL=(root) NOPASSWD: /usr/bin/nmcli, /usr/bin/systemctl poweroff, /usr/bin/systemctl reboot, /usr/bin/timedatectl
+vitrina ALL=(root) NOPASSWD: /usr/bin/nmcli, /usr/bin/systemctl poweroff, /usr/bin/systemctl reboot, /usr/bin/systemctl suspend, /usr/bin/timedatectl

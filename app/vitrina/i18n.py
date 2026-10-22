@@ -129,6 +129,11 @@ EN = {
     "Configurar WiFi": "Set up Wi-Fi",
     "Apagar": "Shut down",
     "Reiniciar": "Restart",
+    "Apagar…": "Shut down…",
+    "Reposo": "Sleep",
+    "¿Apagar la Vitrina?": "Shut down Vitrina?",
+    "En reposo, la pantalla se apaga y gasta casi nada. Despierta al abrir la tapa o con cualquier tecla.":
+        "Sleep turns the screen off and uses almost no power. Open the lid or press any key to wake it.",
     # Biblioteca vacía
     "No hay fotos todavía": "No photos yet",
     "Escanea el código con el celular para agregar fotos": "Scan the code with your phone to add photos",

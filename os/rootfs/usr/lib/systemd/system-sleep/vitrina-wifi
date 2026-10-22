@@ -1,0 +1,7 @@
+#!/bin/sh
+# El driver wl del WiFi Broadcom no siempre despierta bien del reposo:
+# se descarga antes de dormir y se vuelve a cargar al despertar.
+case "$1" in
+    pre)  modprobe -r wl 2>/dev/null || true ;;
+    post) modprobe wl 2>/dev/null || true ;;
+esac

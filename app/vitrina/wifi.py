@@ -148,8 +148,8 @@ class Wifi:
 
 
 def power(action):
-    """Apagar o reiniciar la Mac (solo en la imagen)."""
-    if SYSTEM and action in ("poweroff", "reboot"):
+    """Apagar, reiniciar o poner en reposo la Mac (solo en la imagen)."""
+    if SYSTEM and action in ("poweroff", "reboot", "suspend"):
         subprocess.Popen(_cmd(["/usr/bin/systemctl", action]))
 
 
