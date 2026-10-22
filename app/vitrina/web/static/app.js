@@ -86,6 +86,10 @@ async function start() {
   document.getElementById("tabs").hidden = false;
   document.querySelectorAll("#tabs button").forEach((b) => b.addEventListener("click", () => go(b.dataset.tab)));
   await refresh();
+  try {   // la Vitrina toma la zona horaria del celular (para su reloj)
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    if (tz) fetch("/api/timezone", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tz }) });
+  } catch {}
   go(sessionStorage.getItem("tab") || "upload");
 }
 

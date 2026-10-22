@@ -108,6 +108,8 @@ Las pruebas cubren la lógica de la cámara (que se alcance cada orilla desde cu
 | `app/vitrina/night.py` | Modo noche: horario, sensor de luz y brillo de la pantalla |
 | `app/vitrina/nightclock.py` | Relojes grandes de la noche (ventana y clásico) |
 | `app/vitrina/i18n.py` | Textos en español e inglés |
+| `app/vitrina/wifi.py` | WiFi, apagar y zona horaria en la imagen de la USB (NetworkManager) |
+| `os/` | Construye la imagen de la USB (ver [usb.md](usb.md)) |
 | `app/vitrina/livelib.py` | Biblioteca en vivo: fotos que se agregan, mueven o borran mientras corre |
 | `app/vitrina/web/server.py` | Servidor de la app del celular: emparejamiento, subidas y ajustes |
 | `app/vitrina/web/static/` | La app del celular (HTML, CSS y JavaScript, sin dependencias) |

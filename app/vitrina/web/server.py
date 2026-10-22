@@ -281,7 +281,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(400, {"error": "datos inválidos"})
         routes = {"/api/delete": self.delete, "/api/move": self.move, "/api/settings": self.settings,
                   "/api/collections/create": self.create_collection,
-                  "/api/collections/rename": self.rename_collection, "/api/unpair": self.unpair}
+                  "/api/collections/rename": self.rename_collection, "/api/unpair": self.unpair,
+                  "/api/timezone": self.timezone}
         fn = routes.get(path)
         if not fn:
             return self.send(404, {"error": "no existe"})
@@ -294,6 +295,15 @@ class Handler(BaseHTTPRequestHandler):
         token = v.devices.add(device_name(self.headers.get("User-Agent")))
         cookie = f"{COOKIE}={token}; Max-Age=315360000; Path=/; HttpOnly; SameSite=Lax"
         return self.redirect("/", {"Set-Cookie": cookie})
+
+    def timezone(self, data):
+        """El celular dice su zona horaria; la Vitrina (en la USB) la toma para su reloj."""
+        if not self.need_device():
+            return
+        from ..wifi import set_timezone
+        if set_timezone(str(data.get("tz") or "")):
+            tell_app(self.v.app, "tzset", None)
+        self.send(200, {"ok": True})
 
     def unpair(self, _data):
         h = self.device()

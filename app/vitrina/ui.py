@@ -26,6 +26,7 @@ from . import nightclock as NC  # noqa: E402
 from . import i18n as I18N  # noqa: E402
 from .i18n import tr  # noqa: E402
 from .places import place_of  # noqa: E402
+from . import wifi as WIFI  # noqa: E402
 from . import config as C  # noqa: E402
 from . import levels as LV  # noqa: E402
 from . import video as VID  # noqa: E402
@@ -167,6 +168,10 @@ class App:
         self.sleeping = False
         self.sensor = NIGHT.LightSensor()
         self.glyphs = NC.Glyphs(self.ren)
+        self.wifi = WIFI.Wifi()
+        self.wifi.refresh_status()
+        self.wifi_checked = now
+        self.pw = None              # contraseña de WiFi que se está escribiendo: {"ssid", "text", "show"}
         self.backlight = NIGHT.Backlight()
         self.hits = []
         self.ui_rects = []
@@ -718,6 +723,9 @@ class App:
     def handle(self, e, now):
         if self.debug_input:
             self.debug_event(e)
+        if self.pw is not None and e.type in (pygame.KEYDOWN, pygame.TEXTINPUT):
+            self.type_password(e)       # mientras se escribe la contraseña, las teclas son para eso
+            return
         if e.type == pygame.KEYDOWN and e.key == pygame.K_n:
             self.night_force = not self.night_force   # simula la noche (para probar)
             self.woke = False
@@ -874,6 +882,8 @@ class App:
         if self.settings_open:
             self.close_settings(now)
             return
+        if not self.items:
+            return
         if self.mode == FRAME:
             self.enter_grid(now)
         elif self.mode == VIEWER:
@@ -959,6 +969,8 @@ class App:
             self.lib.renamed_collection(*data)
         elif kind == "settings":
             self.apply_settings(data, now)
+        elif kind == "tzset":
+            time.tzset()            # la hora del reloj ya sale en la zona nueva
 
     def apply_settings(self, changes, now):
         st = self.settings
@@ -1012,6 +1024,21 @@ class App:
             self.jump_camera(*self.plane.cell_center(first), self.frame_scale())
 
     # ------------------------------------------------------------------ actualización
+
+    def update_idle(self, now):
+        """Sin fotos: solo lo que hace falta para Ajustes y el tema."""
+        self.last_t = now
+        if self.theme_anim:
+            src, dst, t0 = self.theme_anim
+            p = min(1.0, (now - t0) / THEME_TIME)
+            T.set(TH.blend(src, dst, EASE_IN_OUT(p)) if p < 1 else dst)
+            if p >= 1:
+                self.theme_anim = None
+        if self.settings_tw:
+            self.settings_amt = self.settings_tw.value(now)[0]
+            if self.settings_tw.done(now):
+                self.settings_tw = None
+        pygame.mouse.set_visible(True)
 
     def update(self, now):
         dt = min(now - self.last_t, 0.1)
@@ -1200,7 +1227,7 @@ class App:
         g.begin_frame(now=now)
         self.hits = []
         self.ui_rects = []
-        amt = self.settings_amt if self.items else 0.0
+        amt = self.settings_amt
         if self.night >= 0.999 and amt <= 0.001 and self.items:
             # Noche completa: solo el reloj sobre negro (la escena no se ve).
             self.ren.draw_color = (0, 0, 0, 255)
@@ -1779,10 +1806,12 @@ class App:
         done = g.button(tr("Listo"), x + w - 28 - 76, y + 20, h=36, active=True, size=14, pad=18)
         self.hit(done, lambda now: self.close_settings(now))
         tabs = [("show", tr("Presentación")), ("screen", tr("Pantalla")), ("phone", tr("Celular"))]
+        if self.wifi.available:
+            tabs.append(("wifi", "WiFi"))
         tw_ = sum(g.tsize(g.text(lbl, 13, T.text, True))[0] + 28 for _, lbl in tabs) + 6
         tsegs, _ = g.segmented(tabs, self.settings_tab, x + (w - tw_) / 2, y + 74, h=36)
         for val, rect in tsegs:
-            self.hit(rect, lambda now, v=val: setattr(self, "settings_tab", v))
+            self.hit(rect, lambda now, v=val: self.pick_tab(v))
         st = self.settings
         ry = [y + 146]
         right = x + w - 28
@@ -1851,13 +1880,128 @@ class App:
             choice("Color del reloj clásico", "Rojo: el que menos molesta", "night_color",
                    [("white", "Blanco"), ("blue", "Azul"), ("red", "Rojo")],
                    enabled=st.night != NIGHT.NEVER and st.night_style == "classic")
-            g.label(tr("Tecla N: simula la noche para probarlo"), x + 28, ry[0] - 4, 12, color=T.text_secondary)
+            if WIFI.SYSTEM:
+                bx = x + 28
+                for label, action in ((tr("Apagar"), "poweroff"), (tr("Reiniciar"), "reboot")):
+                    r = g.button(label, bx, ry[0] - 10, h=36, size=13, pad=16)
+                    self.hit(r, lambda now, a=action: WIFI.power(a))
+                    bx += r[2] + 10
+            else:
+                g.label(tr("Tecla N: simula la noche para probarlo"), x + 28, ry[0] - 4, 12, color=T.text_secondary)
+        elif self.settings_tab == "wifi":
+            self.draw_wifi_tab(x, y + 130, w, now)
         else:
             self.draw_phone_tab(x, y + 130, w)
 
         g.rect(x + 28, y + h - 64, w - 56, 1, T.hairline, T.hairline_alpha)
         g.label(f"Vitrina {__version__}  ·  github.com/Danzelote/Vitrina", x + 28, y + h - 48, 12, color=T.text_secondary)
         g.label(tr("Apoya el proyecto en ko-fi.com/danzelot"), x + 28, y + h - 30, 12, color=T.text_secondary)
+
+    # ------------------------------------------------------------------ WiFi
+
+    def pick_tab(self, tab):
+        self.settings_tab = tab
+        if tab == "wifi" and not self.wifi.scanning:
+            self.wifi.scan()
+
+    def open_wifi(self, now):
+        self.open_settings(now)
+        self.pick_tab("wifi")
+
+    def type_password(self, e):
+        pw = self.pw
+        if e.type == pygame.TEXTINPUT:
+            if len(pw["text"]) < 63:
+                pw["text"] += e.text
+        elif e.key == pygame.K_BACKSPACE:
+            pw["text"] = pw["text"][:-1]
+        elif e.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+            self.wifi_connect()
+        elif e.key == pygame.K_ESCAPE:
+            self.close_password()
+
+    def close_password(self):
+        self.pw = None
+        pygame.key.stop_text_input()
+
+    def wifi_connect(self):
+        if self.pw and len(self.pw["text"]) >= 8:
+            self.wifi.connect(self.pw["ssid"], self.pw["text"])
+
+    def choose_network(self, net):
+        ssid, _signal, secure, in_use = net
+        if in_use:
+            return
+        if secure:
+            self.pw = {"ssid": ssid, "text": "", "show": False}
+            self.wifi.message = ""
+            pygame.key.start_text_input()
+        else:
+            self.wifi.connect(ssid)
+
+    def draw_wifi_tab(self, x, y, w, now):
+        """Ajustes → WiFi: redes cercanas, contraseña y estado de la conexión."""
+        g, wf = self.gfx, self.wifi
+        left, right = x + 28, x + w - 28
+        if wf.wired:
+            status = tr("Conectada por cable")
+        elif wf.current:
+            status = tr("Conectada a {ssid}", ssid=wf.current)
+        else:
+            status = tr("Sin conexión")
+        g.label(status, left, y + 4, 17, bold=True)
+        msg = wf.message
+        note = ""
+        if wf.connecting:
+            note = tr("Conectando…")
+        elif msg == "error:password":
+            note = tr("Contraseña incorrecta")
+        elif msg.startswith("error:"):
+            note = tr("No se pudo conectar")
+        if note:
+            g.label(note, left, y + 30, 13, color=T.text_secondary)
+        if msg == "ok" and self.pw:
+            self.close_password()
+        if self.pw:
+            pw = self.pw
+            top = y + 64
+            g.label(tr("Contraseña de {ssid}", ssid=pw["ssid"]), left, top, 15, bold=True)
+            g.label(tr("Escribe con el teclado de la Mac"), left, top + 22, 13, color=T.text_secondary)
+            bx, by, bw, bh = left, top + 52, right - left, 46
+            g.round_rect(bx, by, bw, bh, T.button, 1.0, 12)
+            shown = pw["text"] if pw["show"] else "•" * len(pw["text"])
+            t = g.text(shown or " ", 17, T.text)
+            tw, th = g.tsize(t)
+            t.draw(dstrect=(bx + 16, by + (bh - th) / 2, tw, th))
+            if int(now * 2) % 2 == 0:         # cursor que parpadea
+                g.rect(bx + 17 + (tw if pw["text"] else 0), by + 12, 2, bh - 24, T.text)
+            ry = by + bh + 18
+            ok = g.button(tr("Conectar"), left, ry, h=40, active=len(pw["text"]) >= 8, size=14)
+            self.hit(ok, lambda now: self.wifi_connect())
+            cancel = g.button(tr("Cancelar"), left + ok[2] + 10, ry, h=40, size=14)
+            self.hit(cancel, lambda now: self.close_password())
+            sh = g.button(tr("Ocultar") if pw["show"] else tr("Mostrar"), right - 110, ry, h=40, size=14)
+            self.hit(sh, lambda now: pw.__setitem__("show", not pw["show"]))
+            return
+        b = g.button(tr("Buscando…") if wf.scanning else tr("Buscar redes"), right - 150, y, h=36, size=13, pad=16)
+        self.hit(b, lambda now: wf.scan())
+        top = y + 64
+        if not wf.networks:
+            if not wf.scanning:
+                g.label(tr("No se encontraron redes"), left, top, 14, color=T.text_secondary)
+            return
+        for k, net in enumerate(wf.networks[:7]):
+            ssid, signal, secure, in_use = net
+            ry = top + k * 52
+            g.rect(left, ry - 8, right - left, 1, T.hairline, T.hairline_alpha)
+            g.label(ssid, left, ry, 15, bold=True)
+            sub = tr("Conectada") if in_use else (tr("Con contraseña") if secure else tr("Abierta"))
+            g.label(sub, left, ry + 21, 12, color=T.text_secondary)
+            for bar in range(4):                       # intensidad de la señal
+                on = signal >= 15 + bar * 22
+                hgt = 6 + bar * 4
+                g.rect(right - 40 + bar * 9, ry + 26 - hgt, 6, hgt, T.text, 1.0 if on else 0.2)
+            self.hit((left, ry - 8, right - left, 52), lambda now, n=net: self.choose_network(n))
 
     def draw_empty_library(self):
         g = self.gfx
@@ -1876,6 +2020,11 @@ class App:
                 "python app/main.py --folder ~/Pictures/Vitrina"
         g.label_centered(tr("No hay fotos todavía"), self.vw / 2, top, 28, bold=True)
         g.label_centered(sub, self.vw / 2, top + 46, 16, color=T.text_dim)
+        if self.wifi.available and not self.wifi.online:
+            label = tr("Configurar WiFi")
+            bw = g.tsize(g.text(label, 14, T.text, True))[0] + 36
+            r = g.button(label, self.vw / 2 - bw / 2, top + 110, h=40, size=14)
+            self.hit(r, self.open_wifi)
         if qr:
             g.label_centered(tr("El celular y la Mac deben estar en el mismo WiFi."), self.vw / 2, top + 72, 14,
                              color=T.text_secondary)
@@ -1955,6 +2104,11 @@ class App:
         self.poll_events(now)
         if self.items:
             self.update(now)
+        else:
+            self.update_idle(now)
+        if now - self.wifi_checked > 5:      # estado de la red, cada 5 s
+            self.wifi_checked = now
+            self.wifi.refresh_status()
         self.draw(now)
         self.ren.present()
 
