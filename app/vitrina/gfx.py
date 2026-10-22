@@ -71,7 +71,8 @@ class Loader:
                 key, path = self.pending.popitem(last=True)
             try:
                 with Image.open(path) as img:
-                    img = img.convert("RGB")
+                    # "g": versión en blanco y negro (para el reloj de noche)
+                    img = img.convert("L").convert("RGB") if key[0] == "g" else img.convert("RGB")
                     data, size = img.tobytes(), img.size
             except Exception:
                 data, size = None, None
@@ -93,6 +94,10 @@ class Gfx:
         self.thumbs = LRU(C.THUMB_CACHE)
         self.screens = LRU(C.SCREEN_CACHE)
         self.backdrops = LRU(8)
+        self.grays = LRU(4)
+        circ = pygame.Surface((512, 512), pygame.SRCALPHA)
+        pygame.draw.circle(circ, (255, 255, 255), (256, 256), 256)
+        self.circle = self._tex(pygame.transform.smoothscale(circ, (256, 256)))
         self.texts = LRU(200)
         self.pills = LRU(160)
         self.anims = {}          # estado animado de controles (selectores, interruptores)
@@ -136,7 +141,7 @@ class Gfx:
             if data is None:
                 continue
             tex = self._tex(pygame.image.frombuffer(data, size, "RGB"))
-            {"t": self.thumbs, "s": self.screens, "b": self.backdrops}[kind].put(key, tex)
+            {"t": self.thumbs, "s": self.screens, "b": self.backdrops, "g": self.grays}[kind].put(key, tex)
 
     def rect(self, x, y, w, h, color, alpha=1.0):
         if alpha <= 0.003 or w <= 0 or h <= 0:
@@ -216,6 +221,12 @@ class Gfx:
         if not item.ready or not item.vertical:
             return None
         return self._cached(self.backdrops, "b", item.key, item.backdrop_path)
+
+    def gray(self, item):
+        """La foto de pantalla en blanco y negro."""
+        if not item.ready:
+            return None
+        return self._cached(self.grays, "g", item.key, item.screen_path)
 
     def has_screen(self, item):
         return item.key in self.screens

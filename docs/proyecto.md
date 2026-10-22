@@ -97,7 +97,11 @@ Ajustes tiene dos pestañas: **Presentación** (Ken Burns, Un día como hoy, fec
 - Tiempo para volver a la presentación.
 - Mostrar fecha y lugar.
 - Orden aleatorio.
-- **Modo noche:** nunca, por horario (22–7, 23–7 o 0–6) o según la luz del cuarto. Al llegar la noche la pantalla baja poco a poco durante 20 minutos y amanece igual de suave. Puede quedar **apagada** o con un **reloj tenue** al centro, como despertador. Mover el mouse la despierta; tras 2 minutos sin uso vuelve a apagarse en 1 minuto. Con la pantalla apagada la app casi no gasta. En la Mac con Vitrina instalado también baja el brillo real de la pantalla. "Según la luz" usa el sensor de luz si la Mac lo tiene (applesmc en las MacBook viejas), o más adelante la cámara si el usuario lo activa (apagado por defecto; se toma una imagen pequeña cada ~30 s, solo se mide el brillo y se descarta; el LED verde de la cámara parpadea en cada medición).
+- **Modo noche:** nunca, por horario (22–7, 23–7 o 0–6) o según la luz del cuarto. Al llegar la noche la pantalla baja poco a poco durante 20 minutos y amanece igual de suave. Puede quedar **apagada** o con un reloj grande sobre negro, inspirado en el modo reposo del iPhone:
+  - **Reloj ventana:** números redondos y gruesos; por dentro se ve la presentación, tenue y con poco color, como si los números fueran una ventana. Al mover el mouse se "entra" al reloj: uno de los puntos crece hasta que la foto llena la pantalla y quedas en la presentación.
+  - **Reloj clásico:** números altos y angostos en blanco, azul o rojo (el rojo es el que menos molesta de noche), con el día a un lado.
+
+  Las tipografías son libres (Fredoka y Bebas Neue, licencia OFL) y van incluidas. Mover el mouse la despierta; tras 2 minutos sin uso vuelve a apagarse en 1 minuto. Con la pantalla apagada la app casi no gasta. En la Mac con Vitrina instalado también baja el brillo real de la pantalla. "Según la luz" usa el sensor de luz si la Mac lo tiene (applesmc en las MacBook viejas), o más adelante la cámara si el usuario lo activa (apagado por defecto; se toma una imagen pequeña cada ~30 s, solo se mide el brillo y se descarta; el LED verde de la cámara parpadea en cada medición).
 - **Acerca de Vitrina:** versión, enlace al repositorio y a [Ko-fi](https://ko-fi.com/danzelot) para apoyar el proyecto. Discreto, sin interrumpir nunca la presentación.
 
 ---

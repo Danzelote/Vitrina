@@ -25,13 +25,16 @@ class Settings:
     clock: str = "off"           # "off" | "12" | "24"
     night: str = "never"         # "never" | "schedule" | "light"
     night_hours: str = "23-7"    # ver night.SCHEDULES
-    night_style: str = "off"     # "off" (apagar) | "clock" (reloj tenue)
+    night_style: str = "off"     # "off" (apagada) | "window" (reloj ventana) | "classic" (reloj clásico)
+    night_color: str = "blue"    # color del reloj clásico: "white" | "blue" | "red"
 
     @classmethod
     def load(cls):
         try:
             with open(_path()) as f:
                 data = json.load(f)
+            if data.get("night_style") == "clock":   # nombre de la versión 0.4.0
+                data["night_style"] = "classic"
             return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
         except Exception:
             return cls()

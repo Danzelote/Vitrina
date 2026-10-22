@@ -91,6 +91,8 @@ Las pruebas cubren la lógica de la cámara (que se alcance cada orilla desde cu
 | `app/vitrina/kenburns.py` | Movimiento lento de las fotos en la presentación |
 | `app/vitrina/memories.py` | "Un día como hoy" |
 | `app/vitrina/night.py` | Modo noche: horario, sensor de luz y brillo de la pantalla |
+| `app/vitrina/nightclock.py` | Relojes grandes de la noche (ventana y clásico) |
+| `app/vitrina/fonts/` | Tipografías libres de los relojes, con sus licencias |
 | `app/vitrina/ui.py` | La interfaz: presentación, cuadrícula, niveles, visor y controles |
 
 ## Qué falta (siguientes versiones)
