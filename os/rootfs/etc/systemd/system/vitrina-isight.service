@@ -1,0 +1,12 @@
+[Unit]
+Description=Firmware de la cámara iSight (desde el macOS de la Mac)
+After=systemd-udev-settle.service local-fs.target
+Before=getty@tty1.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/vitrina/isight.sh
+TimeoutStartSec=60
+
+[Install]
+WantedBy=multi-user.target

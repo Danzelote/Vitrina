@@ -128,8 +128,9 @@ class CameraLight:
         import subprocess
         try:
             out = subprocess.run(
-                [self.ffmpeg, "-v", "error", "-f", "v4l2", "-video_size", "160x120", "-i", self.device,
-                 "-vf", "select=eq(n\\,9)", "-frames:v", "1",   # el 10.º cuadro: ya se ajustó la exposición
+                [self.ffmpeg, "-v", "error", "-f", "v4l2", "-i", self.device,
+                 # el 10.º cuadro (ya se ajustó la exposición), reducido a 160×120
+                 "-vf", "select=eq(n\\,9),scale=160:120", "-frames:v", "1",
                  "-f", "rawvideo", "-pix_fmt", "gray", "-"],
                 capture_output=True, timeout=20).stdout
             if out:
@@ -193,6 +194,8 @@ def diagnostics():
         "brillo": {d: os.access(os.path.join(d, "brightness"), os.W_OK) for d in glob.glob("/sys/class/backlight/*")},
         "usb": usb,
         "grupos": sorted(os.getgroups()),
+        "isight": read("/run/vitrina-isight.log"),
+        "isight_firmware": os.path.exists("/lib/firmware/isight.fw"),
     }
 
 

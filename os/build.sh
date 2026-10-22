@@ -44,6 +44,8 @@ PKGS=(
     libxss1 libxinerama1 libxkbcommon0 libxxf86vm1
     # Sonido
     alsa-utils
+    # Cámara iSight (firmware tomado del macOS de la Mac) y lectura del disco de macOS
+    isight-firmware-tools util-linux
     # La app
     python3 python3-venv libmpv2 ffmpeg
 )
@@ -86,7 +88,7 @@ in_root depmod -a "$KVER"
 log "Configuración de Vitrina"
 cp -a "$HERE/rootfs/." "$ROOT/"
 chmod 440 "$ROOT/etc/sudoers.d/vitrina"
-chmod 755 "$ROOT/usr/lib/systemd/system-sleep/vitrina-wifi"
+chmod 755 "$ROOT/usr/lib/systemd/system-sleep/vitrina-wifi" "$ROOT/opt/vitrina/isight.sh"
 echo vitrina > "$ROOT/etc/hostname"
 printf '127.0.0.1\tlocalhost\n127.0.1.1\tvitrina\n' > "$ROOT/etc/hosts"
 ln -sf /usr/share/zoneinfo/America/Mexico_City "$ROOT/etc/localtime"
@@ -107,7 +109,7 @@ in_root chown -R vitrina:vitrina /home/vitrina
 for unit in apt-daily.timer apt-daily-upgrade.timer man-db.timer e2scrub_all.timer fstrim.timer; do
     in_root systemctl mask "$unit" >/dev/null 2>&1 || true
 done
-in_root systemctl enable NetworkManager systemd-timesyncd >/dev/null 2>&1 || true
+in_root systemctl enable NetworkManager systemd-timesyncd vitrina-isight >/dev/null 2>&1 || true
 
 # -----------------------------------------------------------------------------
 log "La app"
