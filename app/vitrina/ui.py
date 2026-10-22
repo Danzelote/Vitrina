@@ -660,6 +660,11 @@ class App:
             return
         over_ui = any(inside(r, x, y) for r in self.ui_rects)
         if self.lvl == PHOTOS and self.anchor:
+            if self.cam_tween:
+                # Mientras la cámara termina su animación (volver del visor, zoom)
+                # el mouse no la mueve; al terminar se toma su posición como
+                # punto de partida, así no hay salto para "alcanzarlo".
+                return
             self.anchor.moved(x, y)
             if now >= self.long_until and not over_ui:
                 self.tcx, self.tcy = cam.pan_target(x, y, self.anchor, self.grid_scale(), self.plane, self.vw, self.vh)
@@ -765,6 +770,8 @@ class App:
             self.cx, self.cy, self.s = cam.from_screen(tx, ty, s, self.vw, self.vh)
             if self.cam_tween.done(now):
                 self.jump_camera(self.tcx, self.tcy, self.target_s)
+                if self.mode == GRID and self.lvl == PHOTOS:
+                    self.set_anchor()   # el mouse retoma desde donde está ahora
         elif self.mode == GRID:
             tau = (0.45 + 0.13 * self.zi) / 3.5  # más inercia con zoom alto
             k = 1 - math.exp(-dt / tau)
