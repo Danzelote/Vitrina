@@ -130,7 +130,7 @@ class Scanner:
     # -- captura ------------------------------------------------------------------
 
     def _cmd(self, size, extra):
-        args = [self.ffmpeg, "-v", "warning", "-f", "v4l2"]
+        args = [self.ffmpeg, "-nostdin", "-v", "warning", "-f", "v4l2"]
         if size:
             args += ["-video_size", size]
         return args + ["-i", self.device] + extra + ["-f", "rawvideo", "-pix_fmt", "rgb24", "-"]

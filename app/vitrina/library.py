@@ -369,7 +369,7 @@ class Processor:
     def _poster(self, it):
         """Un cuadro del video (a un tercio, máximo en el segundo 1) como imagen."""
         at = min(1.0, it.duration / 3)
-        out = subprocess.run([FFMPEG, "-v", "error", "-ss", f"{at:.2f}", "-i", it.path, "-frames:v", "1",
+        out = subprocess.run([FFMPEG, "-nostdin", "-v", "error", "-ss", f"{at:.2f}", "-i", it.path, "-frames:v", "1",
                               "-vf", f"scale='min({C.SCREEN_LONG_SIDE},iw)':-2", "-f", "image2pipe",
                               "-vcodec", "png", "-"], capture_output=True, timeout=60).stdout
         from io import BytesIO
@@ -381,7 +381,7 @@ class Processor:
             mw, mh = mh, mw
         tmp = it.video_path + ".tmp.mp4"
         light = ["-tune", "fastdecode", "-fpsmax", "30"] if C.LIGHT else []
-        subprocess.run([FFMPEG, "-v", "error", "-y", "-i", it.path,
+        subprocess.run([FFMPEG, "-nostdin", "-v", "error", "-y", "-i", it.path,
                         "-vf", f"scale='min({mw},iw)':'min({mh},ih)':force_original_aspect_ratio=decrease:force_divisible_by=2",
                         "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p", *light,
                         "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", tmp],
@@ -390,7 +390,7 @@ class Processor:
         short = C.PREVIEW_SHORT_SIDE
         scale = f"-2:{short}" if not it.vertical else f"{short}:-2"
         tmp = it.preview_path + ".tmp.mp4"
-        subprocess.run([FFMPEG, "-v", "error", "-y", "-i", it.video_path, "-t", str(C.PREVIEW_SECONDS),
+        subprocess.run([FFMPEG, "-nostdin", "-v", "error", "-y", "-i", it.video_path, "-t", str(C.PREVIEW_SECONDS),
                         "-vf", f"scale={scale}", "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "28",
                         "-pix_fmt", "yuv420p", "-movflags", "+faststart", tmp],
                        check=True, capture_output=True, timeout=600)
@@ -507,7 +507,7 @@ def _make_demo_videos(folder, n, rnd):
         os.makedirs(sub, exist_ok=True)
         out = os.path.join(sub, f"{year}-{month:02d}-{day:02d}_video{k:02d}.mp4")
         freq = 220 + 110 * (k % 4)
-        subprocess.run([FFMPEG, "-v", "error", "-y", "-f", "lavfi", "-i", f"{src}{':' if '=' in src else '='}size={size}:rate=30",
+        subprocess.run([FFMPEG, "-nostdin", "-v", "error", "-y", "-f", "lavfi", "-i", f"{src}{':' if '=' in src else '='}size={size}:rate=30",
                         "-f", "lavfi", "-i", f"sine=frequency={freq}:sample_rate=44100",
                         "-t", str(dur), "-af", "volume=0.15", "-c:v", "libx264", "-preset", "veryfast",
                         "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", out],

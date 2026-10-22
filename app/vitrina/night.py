@@ -163,7 +163,7 @@ class CameraLight:
         try:
             self._fix_exposure()
             out = subprocess.run(
-                [self.ffmpeg, "-v", "error", "-f", "v4l2", "-i", self.device,
+                [self.ffmpeg, "-nostdin", "-v", "error", "-f", "v4l2", "-i", self.device,
                  # el 6.º cuadro (la cámara ya se estabilizó), reducido a 160×120
                  "-vf", "select=eq(n\\,5),scale=160:120", "-frames:v", "1",
                  "-f", "rawvideo", "-pix_fmt", "gray", "-"],
