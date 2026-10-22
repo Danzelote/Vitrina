@@ -50,6 +50,7 @@ class Gfx:
         self.pills = LRU(32)
         self.fonts = {}
         self.loads_left = 0
+        self.dpi = 1.0  # píxeles reales por punto (2 en pantallas Retina)
 
     # -- básicos ------------------------------------------------------------
 
@@ -155,22 +156,26 @@ class Gfx:
         return self.fonts[key]
 
     def text(self, s, size, color=C.TEXT, bold=False):
-        key = (s, size, color, bold)
+        """Texto renderizado a la resolución real; mide en puntos con tsize()."""
+        key = (s, size, color, bold, self.dpi)
         tex = self.texts.get_item(key)
         if tex is None:
-            surf = self.font(size, bold).render(s, True, color)
+            surf = self.font(round(size * self.dpi), bold).render(s, True, color)
             tex = self._tex(surf)
             self.texts.put(key, tex)
         return tex
 
+    def tsize(self, tex):
+        return tex.width / self.dpi, tex.height / self.dpi
+
     def pill_shape(self, w, h, color=C.PILL_BG):
-        key = (int(w), int(h), color)
+        key = (int(w), int(h), color, self.dpi)
         tex = self.pills.get_item(key)
         if tex is None:
-            scale = 2
-            surf = pygame.Surface((int(w) * scale, int(h) * scale), pygame.SRCALPHA)
-            pygame.draw.rect(surf, color, surf.get_rect(), border_radius=int(h) * scale // 2)
-            surf = pygame.transform.smoothscale(surf, (int(w), int(h)))
+            pw, ph = int(w * self.dpi), int(h * self.dpi)
+            surf = pygame.Surface((pw * 2, ph * 2), pygame.SRCALPHA)
+            pygame.draw.rect(surf, color, surf.get_rect(), border_radius=ph)
+            surf = pygame.transform.smoothscale(surf, (pw, ph))
             tex = self._tex(surf)
             self.pills.put(key, tex)
         return tex
@@ -182,18 +187,20 @@ class Gfx:
             return None
         t1 = self.text(label, size, C.TEXT, bold=True)
         t2 = self.text(sublabel, size, C.TEXT_DIM) if sublabel else None
+        w1, h1 = self.tsize(t1)
+        w2, h2 = self.tsize(t2) if t2 else (0, 0)
         pad, gap = 18, 8
-        w = t1.width + (gap + t2.width if t2 else 0) + pad * 2
-        h = max(40, t1.height + 16)
+        w = w1 + (gap + w2 if t2 else 0) + pad * 2
+        h = max(40, h1 + 16)
         x = cx - w / 2 if anchor == "center" else cx
         bg = self.pill_shape(w, h)
         bg.alpha = int(255 * alpha)
         bg.draw(dstrect=(x, y, w, h))
         t1.alpha = int(255 * alpha)
-        t1.draw(dstrect=(x + pad, y + (h - t1.height) / 2, t1.width, t1.height))
+        t1.draw(dstrect=(x + pad, y + (h - h1) / 2, w1, h1))
         if t2:
             t2.alpha = int(255 * alpha)
-            t2.draw(dstrect=(x + pad + t1.width + gap, y + (h - t2.height) / 2, t2.width, t2.height))
+            t2.draw(dstrect=(x + pad + w1 + gap, y + (h - h2) / 2, w2, h2))
         return (x, y, w, h)
 
     def label(self, s, x, y, size, alpha=1.0, bold=False, color=C.TEXT):
@@ -201,4 +208,10 @@ class Gfx:
             return
         t = self.text(s, size, color, bold)
         t.alpha = int(255 * alpha)
-        t.draw(dstrect=(x, y, t.width, t.height))
+        w, h = self.tsize(t)
+        t.draw(dstrect=(x, y, w, h))
+
+    def label_centered(self, s, cx, y, size, alpha=1.0, bold=False, color=C.TEXT):
+        t = self.text(s, size, color, bold)
+        w, _ = self.tsize(t)
+        self.label(s, cx - w / 2, y, size, alpha, bold, color)

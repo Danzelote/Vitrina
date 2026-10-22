@@ -27,11 +27,12 @@ class App:
     def __init__(self, items, processor=None, fullscreen=False, invert_zoom=False, size=(1280, 800)):
         pygame.display.init()
         pygame.font.init()
-        self.win = Window("Vitrina", size=size, resizable=True)
+        self.win = Window("Vitrina", size=size, resizable=True, allow_high_dpi=True)
         if fullscreen:
             self.win.set_fullscreen(True)
         self.ren = Renderer(self.win, accelerated=-1, vsync=True)
         self.gfx = Gfx(self.ren)
+        self.fit_to_window()
         self.items = items
         self.processor = processor
         self.zoom_sign = -1 if invert_zoom else 1
@@ -69,6 +70,15 @@ class App:
         pygame.mouse.set_visible(False)
 
     # ------------------------------------------------------------------ escalas
+
+    def fit_to_window(self):
+        """Dibuja en puntos de pantalla pero a la resolución real (Retina)."""
+        self.ren.logical_size = (0, 0)
+        out_w = self.ren.get_viewport().width
+        win_w, win_h = self.win.size
+        self.gfx.dpi = max(1.0, out_w / win_w) if win_w else 1.0
+        self.ren.logical_size = (win_w, win_h)
+        self.vw, self.vh = win_w, win_h
 
     def frame_scale(self):
         return self.vh / C.CELL
@@ -241,7 +251,7 @@ class App:
         elif e.type == pygame.WINDOWENTER:
             self.inside = True
         elif e.type in (pygame.WINDOWSIZECHANGED, pygame.WINDOWRESIZED):
-            self.vw, self.vh = self.win.size
+            self.fit_to_window()
 
     def _is_fullscreen(self):
         return bool(pygame.display.get_init() and self.win.size == pygame.display.get_desktop_sizes()[0])
@@ -467,10 +477,9 @@ class App:
 
     def draw_empty(self):
         g = self.gfx
-        t = g.text("No hay fotos todavía", 28, bold=True)
-        t.draw(dstrect=((self.vw - t.width) / 2, self.vh / 2 - 40, t.width, t.height))
-        t2 = g.text("Corre Vitrina con --folder y una carpeta de fotos, o con --demo", 16, C.TEXT_DIM)
-        t2.draw(dstrect=((self.vw - t2.width) / 2, self.vh / 2 + 6, t2.width, t2.height))
+        g.label_centered("No hay fotos todavía", self.vw / 2, self.vh / 2 - 40, 28, bold=True)
+        g.label_centered("Corre Vitrina con --folder y una carpeta de fotos, o con --demo",
+                         self.vw / 2, self.vh / 2 + 6, 16, color=C.TEXT_DIM)
 
     # ------------------------------------------------------------------ ciclo
 
