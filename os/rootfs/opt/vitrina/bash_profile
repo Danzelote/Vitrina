@@ -1,0 +1,4 @@
+# En la primera consola, abre la pantalla de Vitrina (sin escritorio).
+if [ -z "$DISPLAY" ] && [ "$(tty)" = "/dev/tty1" ]; then
+    exec startx /opt/vitrina/xinitrc -- -quiet -nolisten tcp vt1 >/dev/null 2>&1
+fi

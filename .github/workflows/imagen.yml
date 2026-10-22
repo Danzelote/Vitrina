@@ -1,0 +1,79 @@
+# Construye la imagen de la USB de Vitrina, la prueba en una máquina virtual y
+# la publica en Releases. Corre al subir una etiqueta v* (por ejemplo v0.7.0).
+name: Imagen USB
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  construir:
+    runs-on: ubuntu-24.04
+    container:
+      image: debian:trixie
+      options: --privileged
+    steps:
+      - uses: actions/checkout@v4
+      - name: Construir la imagen
+        shell: bash
+        run: |
+          bash os/build.sh 2>&1 | tee build.log
+          exit ${PIPESTATUS[0]}
+      - name: Resumen del error
+        if: failure()
+        shell: bash
+        run: |
+          msg=$(tail -n 40 build.log | sed 's/%/%25/g' | sed ':a;N;$!ba;s/\n/%0A/g')
+          echo "::error title=Falló la construcción::$msg"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: imagen
+          path: |
+            out/*.iso
+            out/*.sha256
+            out/vmlinuz
+            out/initrd.img
+          retention-days: 7
+
+  probar-y-publicar:
+    needs: construir
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: imagen
+          path: out
+      - name: Herramientas
+        run: sudo apt-get update -q && sudo apt-get install -y -q qemu-system-x86 socat
+      - name: Probar en una máquina virtual
+        id: prueba
+        continue-on-error: true
+        shell: bash
+        run: |
+          bash os/smoke.sh out/vitrina-*.iso 2>&1 | tee out/prueba.txt
+          exit ${PIPESTATUS[0]}
+      - name: Resumen de la prueba
+        if: always()
+        shell: bash
+        run: |
+          msg=$(tail -n 40 out/prueba.txt 2>/dev/null | sed 's/%/%25/g' | sed ':a;N;$!ba;s/\n/%0A/g')
+          echo "::notice title=Prueba en máquina virtual (${{ steps.prueba.outcome }})::$msg"
+      - name: Publicar
+        uses: softprops/action-gh-release@v2
+        with:
+          prerelease: true
+          name: Vitrina ${{ github.ref_name }}
+          body: |
+            Imagen para la USB. Grábala con balenaEtcher y arranca la Mac con la tecla ⌥ Option presionada.
+            Instrucciones: docs/usb.md. Prueba automática en máquina virtual: ${{ steps.prueba.outcome }}.
+          files: |
+            out/vitrina-*.iso
+            out/*.sha256
+            out/pantalla.png
+            out/serial.log
+            out/prueba.txt

@@ -1,0 +1,10 @@
+// Vitrina puede conectarse a redes WiFi, apagar y reiniciar sin pedir contraseña.
+polkit.addRule(function (action, subject) {
+    if (subject.user == "vitrina" &&
+        (action.id.indexOf("org.freedesktop.NetworkManager.") == 0 ||
+         action.id.indexOf("org.freedesktop.login1.power-off") == 0 ||
+         action.id.indexOf("org.freedesktop.login1.reboot") == 0 ||
+         action.id.indexOf("org.freedesktop.timedate1.set-timezone") == 0)) {
+        return polkit.Result.YES;
+    }
+});
