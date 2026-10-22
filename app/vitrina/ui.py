@@ -27,8 +27,9 @@ FRAME, GRID, VIEWER = "frame", "grid", "viewer"
 PHOTOS, MONTHS, YEARS, COLLS = "photos", "months", "years", "colls"
 RANK = {PHOTOS: 0, MONTHS: 1, COLLS: 1, YEARS: 2}
 LEVEL_TIME = 0.75
-SWIPE_TIME = 0.5
+SWIPE_TIME = 0.85     # cambio de foto en el visor (flechas, botones y gesto)
 SWIPE_EASE = cubic_bezier(0.32, 0.72, 0.0, 1.0)   # suave al llegar, como en iOS
+SWIPE_TRIGGER = 1.0    # desplazamiento del trackpad que cuenta como gesto
 RELEASE_PAUSE = 0.7    # sin aviso de dedos: pausa que se toma como "soltado"
 SWIPE_UNIT = 60        # puntos que avanza la foto por cada unidad de desplazamiento del trackpad
 GESTURE_GAP = 0.25     # segundos sin eventos de rueda = gesto nuevo
@@ -108,6 +109,7 @@ class App:
         self.fingers = set()       # dedos sobre el trackpad (si el sistema los reporta)
         self.touch_seen = False
         self.ignore_swipe_until_gap = False
+        self.swipe_acc = 0.0
         self.hits = []
         self.ui_rects = []
         self.running = True
@@ -576,27 +578,22 @@ class App:
             self.zoom(-1, now, from_wheel=True)
 
     def on_swipe(self, dx, now):
-        """Arrastre con dos dedos en el visor: la foto sigue a los dedos y al
-        soltar termina el cambio o regresa."""
+        """Deslizar con dos dedos en el visor: cada gesto equivale a un clic en
+        las flechas (una foto por gesto, con la animación completa)."""
         gap = now - self.wheel_last
         self.wheel_last = now
         self.last_move = now
         if gap > GESTURE_GAP:
             self.ignore_swipe_until_gap = False
+            self.swipe_acc = 0.0
         if dx == 0 or self.m_tween or self.ignore_swipe_until_gap:
             return
-        if self.swipe:
-            return  # deja terminar la animación anterior
-        if self.drag is None:
-            self.drag = 0.0
-            self.drag_vis = 0.0
-            self.drag_vel = 0.0
-            self.rubber = None
-        step = dx * self.zoom_sign * SWIPE_UNIT / self.page_width(self.morph_i)
-        p = self.drag + step
-        if self.neighbor(self.morph_i, 1 if p > 0 else -1) is None:
-            p = self.drag + step * 0.3  # resistencia en la primera y la última
-        self.drag = max(-1.0, min(1.0, p))
+        if self.swipe_acc * dx < 0:
+            self.swipe_acc = 0.0
+        self.swipe_acc += dx * self.zoom_sign
+        if abs(self.swipe_acc) >= SWIPE_TRIGGER:
+            self.viewer_step(1 if self.swipe_acc > 0 else -1, now)
+            self.ignore_swipe_until_gap = True   # el resto del gesto (e inercia) no cuenta
 
     def on_click(self, now):
         self.last_move = now
