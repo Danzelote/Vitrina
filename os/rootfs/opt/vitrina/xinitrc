@@ -1,4 +1,4 @@
 #!/bin/sh
 xset s off -dpms s noblank 2>/dev/null
-xsetroot -solid black 2>/dev/null
+xsetroot -solid black -cursor_name left_ptr 2>/dev/null
 exec /opt/vitrina/run.sh

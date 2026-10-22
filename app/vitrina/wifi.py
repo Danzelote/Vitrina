@@ -31,9 +31,14 @@ def _split(line):
     return out
 
 
+def _cmd(args):
+    """En la imagen se usa sudo (permitido solo para estos comandos): no depende de polkit."""
+    return (["sudo", "-n"] if SYSTEM and shutil.which("sudo") else []) + args
+
+
 def _run(args, timeout=40):
     try:
-        r = subprocess.run([NMCLI] + args, capture_output=True, text=True, timeout=timeout)
+        r = subprocess.run(_cmd([NMCLI] + args), capture_output=True, text=True, timeout=timeout)
         return r.returncode, (r.stdout or "") + (r.stderr or "")
     except Exception as exc:           # noqa: BLE001
         return 1, str(exc)
@@ -128,11 +133,13 @@ class Wifi:
             code, out = _run(args, 60)
             if code == 0:
                 self.message = "ok"
-            elif "Secrets were required" in out or "password" in out.lower() or "802-11-wireless-security" in out:
+            elif "Secrets were required" in out or "802-11-wireless-security.psk" in out:
                 self.message = "error:password"
                 _run(["connection", "delete", "id", ssid], 10)     # no guardar la contraseña mala
             else:
                 self.message = "error:" + (out.strip().splitlines() or ["?"])[-1][:120]
+            if code != 0:
+                print("WiFi:", out.strip()[:300], flush=True)
             self._status()
         finally:
             self.connecting = None
@@ -141,7 +148,7 @@ class Wifi:
 def power(action):
     """Apagar o reiniciar la Mac (solo en la imagen)."""
     if SYSTEM and action in ("poweroff", "reboot"):
-        subprocess.Popen(["systemctl", action])
+        subprocess.Popen(_cmd(["/usr/bin/systemctl", action]))
 
 
 def set_timezone(tz):
@@ -151,7 +158,7 @@ def set_timezone(tz):
     if not os.path.exists(os.path.join("/usr/share/zoneinfo", tz)):
         return False
     try:
-        subprocess.run(["timedatectl", "set-timezone", tz], timeout=10, check=True, capture_output=True)
+        subprocess.run(_cmd(["/usr/bin/timedatectl", "set-timezone", tz]), timeout=10, check=True, capture_output=True)
         return True
     except Exception:          # noqa: BLE001
         return False

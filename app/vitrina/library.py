@@ -290,8 +290,8 @@ class Processor:
         it.thumb_path = os.path.join(self.dir, it.key + "_t.jpg")
         it.screen_path = os.path.join(self.dir, it.key + "_s.jpg")
         it.backdrop_path = os.path.join(self.dir, it.key + "_b.jpg")
-        it.video_path = os.path.join(self.dir, it.key + "_v.mp4")
-        it.preview_path = os.path.join(self.dir, it.key + "_p.mp4")
+        it.video_path = os.path.join(self.dir, f"{it.key}_v{C.VIDEO_PROFILE}.mp4")
+        it.preview_path = os.path.join(self.dir, f"{it.key}_p{C.VIDEO_PROFILE}.mp4")
         m = self.meta.get(it.key)
         if m and os.path.exists(it.thumb_path) and os.path.exists(it.screen_path):
             it.width, it.height = m[0], m[1]
@@ -380,9 +380,10 @@ class Processor:
         if it.vertical:
             mw, mh = mh, mw
         tmp = it.video_path + ".tmp.mp4"
+        light = ["-tune", "fastdecode", "-fpsmax", "30"] if C.LIGHT else []
         subprocess.run([FFMPEG, "-v", "error", "-y", "-i", it.path,
                         "-vf", f"scale='min({mw},iw)':'min({mh},ih)':force_original_aspect_ratio=decrease:force_divisible_by=2",
-                        "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p",
+                        "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p", *light,
                         "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", tmp],
                        check=True, capture_output=True, timeout=3600)
         os.replace(tmp, it.video_path)

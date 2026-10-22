@@ -1,6 +1,8 @@
 """Constantes de diseño. Las medidas de la cuadrícula están en "unidades de plano":
 a zoom 1, una unidad equivale a un píxel de pantalla."""
 
+import os
+
 # Cuadrícula
 CELL = 230          # lado de cada miniatura cuadrada
 GAP = 16            # espacio entre miniaturas
@@ -55,7 +57,25 @@ IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif",
 VIDEO_EXTS = {".mp4", ".mov", ".m4v", ".avi", ".mkv", ".3gp"}
 
 # Video: versión ligera para reproducir y clip de vista previa
-VIDEO_MAX = (1280, 720)       # cabe en esto (o 720x1280 si es vertical)
+
+
+def _light_hardware():
+    """Mac vieja (Core 2 Duo y similares, sin AVX) en Linux: videos más ligeros."""
+    if os.environ.get("VITRINA_LIGERO") is not None:
+        return os.environ["VITRINA_LIGERO"] == "1"
+    try:
+        with open("/proc/cpuinfo") as f:
+            flags = next((ln for ln in f if ln.startswith("flags")), "")
+        return " avx" not in flags
+    except OSError:
+        return False        # macOS u otros: equipo actual
+
+
+LIGHT = _light_hardware()
+# Versión para reproducir: cabe en esto (o al revés si es vertical). En equipos
+# viejos, más chica, a 30 cuadros como máximo y codificada para decodificarse fácil.
+VIDEO_MAX = (960, 540) if LIGHT else (1280, 720)
+VIDEO_PROFILE = "l" if LIGHT else "n"     # parte del nombre en caché: si cambia, se regenera
 PREVIEW_SHORT_SIDE = 240
 PREVIEW_SECONDS = 5
 PREVIEW_DELAY = 1.5           # segundos con el mouse encima antes de la vista previa

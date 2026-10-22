@@ -7,6 +7,7 @@ el brillo de la pantalla; en otras computadoras solo se oscurece la imagen.
 
 import glob
 import os
+import threading
 import time
 
 NEVER, SCHEDULE, LIGHT = "never", "schedule", "light"
@@ -82,6 +83,68 @@ class LightSensor:
         elif now - self._since >= self.CONFIRM:
             self.dark, self._since = looks_dark, None
         return self.dark
+
+
+class CameraLight:
+    """Sin sensor de luz: usa la cámara (iSight) para saber si el cuarto está a
+    oscuras. Toma una foto pequeña cada 30 s, solo mide qué tan clara es y la
+    descarta. El foquito verde de la cámara parpadea en cada medición."""
+
+    EVERY = 30
+    DARK, LIGHT = 35, 55      # brillo promedio (0–255) con histéresis
+    CONFIRM = 2               # mediciones seguidas antes de cambiar de opinión
+
+    def __init__(self):
+        import shutil
+        self.device = "/dev/video0" if os.path.exists("/dev/video0") else None
+        self.ffmpeg = shutil.which("ffmpeg")
+        self.kind = "camera"
+        self.dark = False
+        self._last = -1e9
+        self._busy = False
+        self._streak = 0
+
+    @property
+    def available(self):
+        return bool(self.device and self.ffmpeg)
+
+    def _measure(self):
+        import subprocess
+        try:
+            out = subprocess.run(
+                [self.ffmpeg, "-v", "error", "-f", "v4l2", "-video_size", "160x120", "-i", self.device,
+                 "-vf", "select=eq(n\\,9)", "-frames:v", "1",   # el 10.º cuadro: ya se ajustó la exposición
+                 "-f", "rawvideo", "-pix_fmt", "gray", "-"],
+                capture_output=True, timeout=20).stdout
+            if out:
+                frame = out[-160 * 120:]
+                level = sum(frame) / len(frame)
+                looks_dark = level < self.DARK if not self.dark else level < self.LIGHT
+                if looks_dark != self.dark:
+                    self._streak += 1
+                    if self._streak >= self.CONFIRM:
+                        self.dark, self._streak = looks_dark, 0
+                else:
+                    self._streak = 0
+        except Exception:      # noqa: BLE001
+            pass
+        finally:
+            self._busy = False
+
+    def update(self, now):
+        if self.available and not self._busy and now - self._last >= self.EVERY:
+            self._last, self._busy = now, True
+            threading.Thread(target=self._measure, daemon=True).start()
+        return self.dark
+
+
+def light_sensor():
+    """El sensor de luz de la Mac si tiene; si no, la cámara."""
+    s = LightSensor()
+    if s.available:
+        return s
+    cam = CameraLight()
+    return cam if cam.available else s
 
 
 class Backlight:

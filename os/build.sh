@@ -35,7 +35,7 @@ PKGS=(
     linux-image-amd64 live-boot systemd-sysv dbus udev sudo ca-certificates tzdata
     systemd-timesyncd procps kmod
     # Red: WiFi y cable
-    network-manager wpasupplicant iw rfkill firmware-linux-free
+    network-manager wpasupplicant iw rfkill firmware-linux-free polkitd dbus-user-session
     # WiFi Broadcom de las MacBook (driver "wl"): se compila aquí y luego se quitan los compiladores
     broadcom-sta-dkms dkms linux-headers-amd64
     # Pantalla: X mínimo, sin escritorio
@@ -85,6 +85,7 @@ in_root depmod -a "$KVER"
 # -----------------------------------------------------------------------------
 log "Configuración de Vitrina"
 cp -a "$HERE/rootfs/." "$ROOT/"
+chmod 440 "$ROOT/etc/sudoers.d/vitrina"
 echo vitrina > "$ROOT/etc/hostname"
 printf '127.0.0.1\tlocalhost\n127.0.1.1\tvitrina\n' > "$ROOT/etc/hosts"
 ln -sf /usr/share/zoneinfo/America/Mexico_City "$ROOT/etc/localtime"

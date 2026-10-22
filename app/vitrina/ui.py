@@ -138,6 +138,7 @@ class App:
         self.ignore_swipe_until_gap = False
         self.swipe_acc = 0.0
         self.settings_tab = "show"
+        self.slide_history = []     # fotos ya mostradas (flecha izquierda en la presentación)
         self.lib_version = lib.version if lib else 0
         self.new_keys = []          # fotos recién llegadas: se muestran primero
         self.toast = None           # (texto, inicio) aviso discreto arriba
@@ -166,7 +167,7 @@ class App:
         self.woke = False
         self.last_input = now
         self.sleeping = False
-        self.sensor = NIGHT.LightSensor()
+        self.sensor = NIGHT.light_sensor()
         self.glyphs = NC.Glyphs(self.ren)
         self.wifi = WIFI.Wifi()
         self.wifi.refresh_status()
@@ -178,6 +179,21 @@ class App:
         self.running = True
         self.last_t = now
         pygame.mouse.set_visible(False)
+        self.set_pointer()
+
+    def set_pointer(self):
+        """Puntero propio: un círculo suave (como el del iPad), no la flecha ni la X."""
+        try:
+            size = 26
+            big = pygame.Surface((size * 4, size * 4), pygame.SRCALPHA)
+            c = size * 2
+            pygame.draw.circle(big, (0, 0, 0, 40), (c, c + 4), 40)          # sombra
+            pygame.draw.circle(big, (0, 0, 0, 120), (c, c), 38)            # orilla
+            pygame.draw.circle(big, (255, 255, 255, 225), (c, c), 33)      # centro
+            surf = pygame.transform.smoothscale(big, (size, size))
+            pygame.mouse.set_cursor(pygame.cursors.Cursor((size // 2, size // 2), surf))
+        except Exception:      # noqa: BLE001  (sin puntero de color: se queda el del sistema)
+            pass
 
     # ------------------------------------------------------------------ escalas
 
@@ -266,6 +282,7 @@ class App:
     def video_size(self, item, max_w):
         """Tamaño en píxeles al que conviene decodificar un video."""
         w, h = item.width or 1280, item.height or 720
+        max_w = min(max_w, C.VIDEO_MAX[0])        # en equipos viejos, no más que la versión ligera
         k = min(1.0, max_w / max(w, 1), (max_w * 0.75 if not item.vertical else max_w * 1.8) / max(h, 1))
         return max(64, w * k), max(64, h * k)
 
@@ -659,6 +676,9 @@ class App:
         return KB.apply(rect, *e[1].at(now - e[0]), amount)
 
     def finish_fade(self):
+        if not getattr(self, "_going_back", False):
+            self.slide_history = (self.slide_history + [self.hero])[-60:]
+        self._going_back = False
         nxt, _ = self.fade
         self.fade = None
         self.hero = self.morph_i = nxt
@@ -673,6 +693,20 @@ class App:
         if item.is_video and self.player_for("frame", self.hero):
             return max(C.SLIDE_TIME, min(item.duration, 60.0)) - 0.6
         return C.SLIDE_TIME
+
+    def frame_step(self, d, now):
+        """Flechas en la presentación: siguiente o anterior foto, con su fundido."""
+        if self.fade or not self.items:
+            return
+        if d < 0:
+            if not self.slide_history:
+                return
+            self._next = self.slide_history.pop()
+            self._going_back = True
+        else:
+            self._next = None
+        self.last_slide = -1e9      # que cambie ya
+        self._next_since = now
 
     def update_slideshow(self, now):
         if self.fade:
@@ -723,7 +757,8 @@ class App:
     def handle(self, e, now):
         if self.debug_input:
             self.debug_event(e)
-        if self.pw is not None and e.type in (pygame.KEYDOWN, pygame.TEXTINPUT):
+        if (self.pw is not None and self.settings_open and self.settings_tab == "wifi"
+                and e.type in (pygame.KEYDOWN, pygame.TEXTINPUT)):
             self.type_password(e)       # mientras se escribe la contraseña, las teclas son para eso
             return
         if e.type == pygame.KEYDOWN and e.key == pygame.K_n:
@@ -793,9 +828,15 @@ class App:
         elif e.key == pygame.K_SPACE:
             self.toggle_video(now)
         elif e.key == pygame.K_RIGHT:
-            self.viewer_step(1, now)
+            if self.mode == FRAME:
+                self.frame_step(1, now)
+            else:
+                self.viewer_step(1, now)
         elif e.key == pygame.K_LEFT:
-            self.viewer_step(-1, now)
+            if self.mode == FRAME:
+                self.frame_step(-1, now)
+            else:
+                self.viewer_step(-1, now)
         elif e.key in (pygame.K_EQUALS, pygame.K_PLUS, pygame.K_KP_PLUS):
             self.zoom(1, now, at_mouse=False)
         elif e.key in (pygame.K_MINUS, pygame.K_KP_MINUS):
@@ -928,6 +969,8 @@ class App:
         self.settings_open = False
         self.settings_tw = Tween((self.settings_amt,), (0.0,), SETTINGS_OUT, EASE, now)
         self.settings.save()
+        if self.pw is not None:      # si se quedó a medio escribir una contraseña
+            self.close_password()
 
     # ------------------------------------------------------------------ biblioteca en vivo
 
@@ -1003,6 +1046,7 @@ class App:
         self.plane = cam.Plane(*cam.grid_shape(max(1, len(items))), len(items))
         self.groups = LV.Groups(items)
         self.queue, self.memory_queue, self.seq_pos, self._next = [], [], None, None
+        self.slide_history = []
         self.hover_i = self.hover_group = None
         if self.coll_filter and not any(it.collection == self.coll_filter for it in items):
             self.coll_filter = None
@@ -1863,7 +1907,9 @@ class App:
             choice("Idioma", "Español o inglés", "language", I18N.LANGS, on_change=self.apply_language)
             choice("Apariencia", "Automático: claro de día", "theme",
                    [("light", "Claro"), ("dark", "Oscuro"), ("auto", "Automático")], on_change=self.apply_theme)
-            if self.sensor.available:
+            if self.sensor.available and getattr(self.sensor, "kind", "") == "camera":
+                light_sub = "Con la cámara: el foquito verde parpadea"
+            elif self.sensor.available:
                 light_sub = "Con el sensor de luz de la Mac"
             else:
                 light_sub = "Por la luz: esta computadora no tiene sensor"
@@ -1900,6 +1946,8 @@ class App:
     # ------------------------------------------------------------------ WiFi
 
     def pick_tab(self, tab):
+        if tab != "wifi" and self.pw is not None:
+            self.close_password()
         self.settings_tab = tab
         if tab == "wifi" and not self.wifi.scanning:
             self.wifi.scan()
@@ -1957,7 +2005,7 @@ class App:
         elif msg == "error:password":
             note = tr("Contraseña incorrecta")
         elif msg.startswith("error:"):
-            note = tr("No se pudo conectar")
+            note = tr("No se pudo conectar") + "  ·  " + msg[6:][:70]
         if note:
             g.label(note, left, y + 30, 13, color=T.text_secondary)
         if msg == "ok" and self.pw:

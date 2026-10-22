@@ -74,6 +74,7 @@ EN = {
     "La pantalla siempre encendida": "Screen always on",
     "Se apaga poco a poco": "Dims slowly",
     "Con el sensor de luz de la Mac": "Uses the Mac's light sensor",
+    "Con la cámara: el foquito verde parpadea": "Uses the camera: its green light blinks",
     "Por la luz: esta computadora no tiene sensor": "This computer has no light sensor",
     "Nunca": "Never",
     "Por horario": "Schedule",

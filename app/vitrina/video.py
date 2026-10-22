@@ -135,6 +135,7 @@ class Player:
         # Sin decodificación por hardware: con el dibujo por software de libmpv
         # puede fallar (VideoToolbox en macOS) y las Macs viejas no la tienen.
         opts = dict(vo="libmpv", hwdec="no", keep_open="yes", loglevel="error", audio_buffer=0.1,
+                    framedrop="vo", sws_fast=True, sws_scaler="fast-bilinear",
                     input_default_bindings=False, input_vo_keyboard=False, osc=False,
                     pause=self.want_pause)
         if not self.audio:
