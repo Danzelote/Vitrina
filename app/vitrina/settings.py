@@ -19,6 +19,7 @@ class Settings:
     idle_seconds: int = int(C.IDLE_TIME)
     show_info: bool = True
     shuffle: bool = False
+    theme: str = "auto"          # "dark" | "light" | "auto"
 
     @classmethod
     def load(cls):

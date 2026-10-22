@@ -83,11 +83,12 @@ Al alejarte más allá del zoom mínimo, las fotos se agrupan (zoom semántico):
 
 ### 2.8 Ajustes
 
+- **Apariencia:** claro, oscuro o automático (claro de día y oscuro de noche). La presentación siempre es negra; el tema cambia la cuadrícula, los niveles, el visor y los controles. Más adelante el automático podrá usar el sensor de luz.
 - Fotos y videos (mostrar el QR para agregar desde el celular).
 - Tiempo para volver a la presentación.
 - Mostrar fecha y lugar.
 - Orden aleatorio.
-- Apagar la pantalla de noche (horario).
+- **Pantalla de noche:** por horario (por defecto), según la luz del cuarto o nunca. "Según la luz" usa el sensor de luz si la Mac lo tiene, o la cámara si el usuario lo activa (apagado por defecto; se toma una imagen pequeña cada ~30 s, solo se mide el brillo y se descarta; el LED verde de la cámara parpadea en cada medición).
 - **Acerca de Vitrina:** versión, enlace al repositorio y a [Ko-fi](https://ko-fi.com/danzelot) para apoyar el proyecto. Discreto, sin interrumpir nunca la presentación.
 
 ---

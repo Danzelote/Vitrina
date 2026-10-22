@@ -19,6 +19,9 @@ from . import __version__  # noqa: E402
 from . import camera as cam  # noqa: E402
 from . import config as C  # noqa: E402
 from . import levels as LV  # noqa: E402
+from . import video as VID  # noqa: E402
+from . import theme as TH  # noqa: E402
+from .theme import T  # noqa: E402
 from .easing import EASE, Tween, cubic_bezier, lerp  # noqa: E402
 from .gfx import Gfx  # noqa: E402
 from .settings import Settings  # noqa: E402
@@ -55,6 +58,7 @@ class App:
         self.items = items
         self.processor = processor
         self.settings = Settings.load()
+        T.set(TH.resolve(self.settings.theme))
         self.zoom_sign = -1 if invert_zoom else 1
         self.plane = cam.Plane(*cam.grid_shape(max(1, len(items))))
         self.groups = LV.Groups(items)
@@ -77,6 +81,7 @@ class App:
         self.m_tween = None
         self.fade = None
         self._next = None
+        self._next_since = 0.0
         self.anchor = None
         self.long_until = 0.0
         self.mx, self.my = self.vw / 2, self.vh / 2
@@ -101,6 +106,10 @@ class App:
         self.coll_filter = None
         self.queue = []
         self.settings_open = False
+        # Videos: un reproductor por papel (visor, presentación, vista previa).
+        self.players = {}          # papel -> (índice, Player)
+        self.dying = []            # reproductores bajando el volumen antes de cerrarse
+        self.hover_since = 0.0
         self.swipe = None          # animación de cambio de foto en el visor
         self.drag = None           # arrastre con dos dedos en curso (progreso con signo)
         self.rubber = None         # rebote al arrastrar en la primera o la última foto
@@ -189,11 +198,67 @@ class App:
         i = self.plane.index_at(px, py, len(self.items))
         return i if i is not None else self.nearest()
 
+    # ------------------------------------------------------------------ videos
+
+    def video_size(self, item, max_w):
+        """Tamaño en píxeles al que conviene decodificar un video."""
+        w, h = item.width or 1280, item.height or 720
+        k = min(1.0, max_w / max(w, 1), (max_w * 0.75 if not item.vertical else max_w * 1.8) / max(h, 1))
+        return max(64, w * k), max(64, h * k)
+
+    def start_video(self, role, i, path=None, audio=False, loop=False, max_w=1280):
+        self.stop_video(role, fade=False)
+        item = self.items[i]
+        if not (VID.AVAILABLE and item.is_video and item.ready):
+            return
+        try:
+            p = VID.Player(self.ren, path or item.play_path, self.video_size(item, max_w), audio=audio, loop=loop)
+        except Exception as exc:
+            print("No se pudo reproducir el video:", exc)
+            return
+        self.players[role] = (i, p)
+
+    def stop_video(self, role, fade=True):
+        entry = self.players.pop(role, None)
+        if not entry:
+            return
+        _i, p = entry
+        if fade and p.audio:
+            p.fade_out_and_close()
+            self.dying.append(p)
+        else:
+            p.close()
+
+    def player_for(self, role, i):
+        entry = self.players.get(role)
+        return entry[1] if entry and entry[0] == i else None
+
+    def video_texture(self, i):
+        for role in ("view", "frame", "next", "preview"):
+            p = self.player_for(role, i)
+            if p and p.has_frame:
+                return p.texture
+        return None
+
+    def update_players(self, dt):
+        for _role, (_i, p) in list(self.players.items()):
+            p.update(dt)
+        self.dying = [p for p in self.dying if p.update(dt)]
+
+    def close_all_videos(self):
+        for role in list(self.players):
+            self.stop_video(role, fade=False)
+        for p in self.dying:
+            p.close()
+        self.dying = []
+
     # ------------------------------------------------------------------ modos
 
     def enter_grid(self, now):
         if self.fade:
             self.finish_fade()
+        self.stop_video("frame", fade=False)
+        self.stop_video("next", fade=False)
         self.mode = GRID
         self.lvl = PHOTOS
         s = self.grid_scale()
@@ -223,6 +288,9 @@ class App:
         self.frame_anchor = None
         self.hint_until = now + C.HINT_TIME
         self.anchor = None
+        self.stop_video("view")
+        self.stop_video("preview", fade=False)
+        self.start_video("frame", i)
         pygame.mouse.set_visible(False)
 
     def open_viewer(self, i, now):
@@ -234,6 +302,8 @@ class App:
         self.move_camera(cx, cy, self.view_scale(), C.MORPH_TIME, now)
         self.morph_to(1.0, C.MORPH_TIME, now)
         self.last_move = now
+        self.stop_video("preview", fade=False)
+        self.start_video("view", i, audio=True)   # empieza desde el inicio, con fundido de audio
 
     def neighbor(self, i, d):
         """Siguiente (d=1) o anterior (d=-1) foto visible con el filtro, o None."""
@@ -253,6 +323,7 @@ class App:
         j = self.neighbor(self.morph_i, d)
         if j is None:
             return
+        self.stop_video("view")
         self.animate_swipe(j, d, 0.0, 1.0, SWIPE_TIME, now)
         self.last_move = now
 
@@ -266,6 +337,8 @@ class App:
         if sw["to"] >= 1.0:
             self.morph_i = self.hero = sw["b"]
             self.jump_camera(*self.plane.cell_center(sw["b"]), self.view_scale())
+            if self.mode == VIEWER:
+                self.start_video("view", sw["b"], audio=True)
 
     def release_drag(self, now):
         """Al soltar: termina el cambio si se arrastró lo suficiente; si no, regresa."""
@@ -306,6 +379,7 @@ class App:
     def close_viewer(self, now):
         if self.swipe:
             self.finish_swipe()
+        self.stop_video("view")   # el sonido se desvanece mientras la foto regresa
         self.mode = GRID
         s = self.grid_scale()
         cx, cy = cam.clamp(*self.plane.cell_center(self.morph_i), s, self.plane, self.vw, self.vh)
@@ -433,6 +507,16 @@ class App:
         self.fade = None
         self.hero = self.morph_i = nxt
         self.jump_camera(*self.plane.cell_center(nxt), self.frame_scale())
+        self.stop_video("frame", fade=False)
+        if "next" in self.players:
+            self.players["frame"] = self.players.pop("next")
+
+    def slide_length(self):
+        """Las fotos duran SLIDE_TIME; los videos, lo que duran (hasta 1 minuto)."""
+        item = self.items[self.hero]
+        if item.is_video and self.player_for("frame", self.hero):
+            return max(C.SLIDE_TIME, min(item.duration, 60.0)) - 0.6
+        return C.SLIDE_TIME
 
     def update_slideshow(self, now):
         if self.fade:
@@ -440,10 +524,15 @@ class App:
                 self.finish_fade()
                 self.last_slide = now
             return
-        if self.cam_tween or now - self.last_slide < C.SLIDE_TIME or len(self.items) < 2:
+        current = self.player_for("frame", self.hero)
+        ended = current is not None and current.ended
+        if self.cam_tween or len(self.items) < 2:
+            return
+        if now - self.last_slide < self.slide_length() and not ended:
             return
         if self._next is None:
             self._next = self.next_index()
+            self._next_since = now
         item = self.items[self._next]
         if not item.ready:
             self._next = None
@@ -451,6 +540,12 @@ class App:
         if self.gfx.screen(item, force=True) is None:
             return
         self.gfx.backdrop(item, force=True)
+        if item.is_video and VID.AVAILABLE:
+            if not self.player_for("next", self._next):
+                self.start_video("next", self._next)
+            p = self.player_for("next", self._next)
+            if p and not p.has_frame and now - self._next_since < 1.5:
+                return  # espera el primer cuadro para que el fundido no muestre negro
         self.fade = (self._next, Tween((0.0,), (1.0,), C.FADE_TIME, EASE, now))
         self._next = None
 
@@ -519,6 +614,8 @@ class App:
         elif e.key == pygame.K_i:
             self.settings.show_info = not self.settings.show_info
             self.settings.save()
+        elif e.key == pygame.K_SPACE:
+            self.toggle_video(now)
         elif e.key == pygame.K_RIGHT:
             self.viewer_step(1, now)
         elif e.key == pygame.K_LEFT:
@@ -614,6 +711,25 @@ class App:
             elif self.lvl != PHOTOS and self.hover_group is not None:
                 self.open_group(self.hover_group, now)
 
+    def set_theme(self, value):
+        self.settings.theme = value
+        self.apply_theme()
+
+    def apply_theme(self):
+        pal = TH.resolve(self.settings.theme)
+        if T.name != pal.name:
+            T.set(pal)
+
+    def toggle_video(self, now):
+        p = self.player_for("view", self.morph_i)
+        if not p or self.mode != VIEWER:
+            return
+        if p.ended:
+            p.restart()
+        else:
+            p.set_paused(not (p.paused or getattr(p, "_pause_when_silent", False)))
+        self.last_move = now
+
     def close_settings(self):
         self.settings_open = False
         self.settings.save()
@@ -623,6 +739,9 @@ class App:
     def update(self, now):
         dt = min(now - self.last_t, 0.1)
         self.last_t = now
+        if now - getattr(self, "_theme_check", 0.0) > 30:   # el automático cambia con la hora
+            self._theme_check = now
+            self.apply_theme()
         if self.cam_tween:
             tx, ty, s = self.cam_tween.value(now)
             self.cx, self.cy, self.s = cam.from_screen(tx, ty, s, self.vw, self.vh)
@@ -661,9 +780,20 @@ class App:
             hi = self.plane.index_at(px, py, len(self.items))
             if hi != self.hover_i:
                 self.hover_i, self.hover_amt = hi, 0.0
+                self.hover_since = now
             self.hover_amt += (1.0 - self.hover_amt) * (1 - math.exp(-dt / 0.08))
         else:
             self.hover_i = None
+        # Vista previa de video al dejar el mouse encima un momento.
+        hv = self.hover_i
+        want_preview = (hv is not None and self.items[hv].is_video and self.items[hv].ready
+                        and now - self.hover_since >= C.PREVIEW_DELAY and now >= self.long_until)
+        if want_preview and not self.player_for("preview", hv):
+            it = self.items[hv]
+            self.start_video("preview", hv, path=it.preview_path if it.video_ready else it.path, loop=True, max_w=360)
+        elif not want_preview and "preview" in self.players:
+            self.stop_video("preview", fade=False)
+        self.update_players(dt)
         if can_hover and self.lvl != PHOTOS:
             self.hover_group = next((g for g, r in reversed(self.cluster_rects) if inside(r, self.mx, self.my)), None)
         else:
@@ -671,6 +801,9 @@ class App:
 
         if self.settings_open:
             self.last_move = now
+        vp = self.player_for("view", self.morph_i)
+        if self.mode == VIEWER and vp and not vp.paused and not vp.ended:
+            self.last_move = now   # no regresa a la presentación mientras se ve un video
         if self.mode == VIEWER and not self.swipe:
             for d in (1, -1):
                 j = self.neighbor(self.morph_i, d)
@@ -714,7 +847,7 @@ class App:
         self.hits = []
         self.ui_rects = []
         frame_amt = self.m if self.big_kind == FRAME else 0.0
-        bg = tuple(round(lerp(a, b, frame_amt)) for a, b in zip(C.BG_GRID, C.BG_FRAME))
+        bg = tuple(round(lerp(a, b, frame_amt)) for a, b in zip(T.bg, C.BG_FRAME))
         self.ren.draw_color = (*bg, 255)
         self.ren.clear()
         if not self.items:
@@ -768,7 +901,7 @@ class App:
                     continue
                 a = alpha * (1.0 if self.matches(i) else 0.14)
                 x, y = tx + s * col * pitch, ty + s * row * pitch
-                self.draw_tile(self.items[i], x, y, C.CELL * s, C.CELL * s, a, radius, bg)
+                self.draw_tile(self.items[i], x, y, C.CELL * s, C.CELL * s, a, radius, bg, idx=i, badge=True)
         if hovered is not None:
             col, row = hovered % self.plane.cols, hovered // self.plane.cols
             k = 1 + 0.07 * self.hover_amt
@@ -778,18 +911,41 @@ class App:
             a = alpha * (1.0 if self.matches(hovered) else 0.14)
             if self.hover_amt > 0.05:
                 g.round_rect(x + 6, y + 12 * self.hover_amt, w - 12, w, (0, 0, 0, 255), 0.35 * self.hover_amt * a, radius)
-            self.draw_tile(self.items[hovered], x, y, w, w, a, radius * k, bg)
+            self.draw_tile(self.items[hovered], x, y, w, w, a, radius * k, bg, idx=hovered, badge=True)
 
-    def draw_tile(self, item, x, y, w, h, alpha, radius, bg, prefer_screen=False):
+    def draw_tile(self, item, x, y, w, h, alpha, radius, bg, prefer_screen=False, idx=None, badge=False):
         g = self.gfx
-        tex = g.screen(item, force=True) if prefer_screen else None
+        tex = self.video_texture(idx) if idx is not None and item.is_video else None
+        if tex is None and prefer_screen:
+            tex = g.screen(item, force=True)
         if tex is None:
             tex = g.thumb(item)
         if tex is None:
-            g.rect(x, y, w, h, C.PLACEHOLDER, alpha)
+            g.rect(x, y, w, h, T.placeholder, alpha)
             g.corners(x, y, w, h, radius, bg, alpha)
             return
         g.image(tex, x, y, w, h, alpha, radius, bg)
+        if badge and item.is_video and w > 90:
+            self.draw_video_badge(item, x, y, w, h, alpha, idx)
+
+    def draw_video_badge(self, item, x, y, w, h, alpha, idx):
+        g = self.gfx
+        p = self.player_for("preview", idx)
+        if p and p.has_frame:
+            dur = p.duration or 0
+            frac = (p.position / dur) if dur else 0
+            g.rect(x, y + h - 3, w, 3, (255, 255, 255), 0.25 * alpha)
+            g.rect(x, y + h - 3, w * min(frac, 1.0), 3, (255, 255, 255), alpha)
+            return
+        t = g.text(item.duration_text, 11, C.TEXT, True)
+        tw, th = g.tsize(t)
+        bw, bh = tw + 28, 20
+        bx, by = x + 9, y + h - 9 - bh
+        g.round_rect(bx, by, bw, bh, (0, 0, 0, 150), alpha)
+        cy = by + bh / 2
+        g.triangle(((bx + 8, cy - 4), (bx + 8, cy + 4), (bx + 15, cy)), C.TEXT, alpha)
+        t.alpha = int(255 * alpha)
+        t.draw(dstrect=(bx + 20, by + (bh - th) / 2, tw, th))
 
     def draw_morph(self, tx, ty, s, bg):
         if self.m <= 0.001 and self.mode == GRID:
@@ -801,7 +957,8 @@ class App:
         x, y = tx + s * (pcx - w / 2), ty + s * (pcy - h / 2)
         big_r = 0.0 if self.big_kind == FRAME else C.RADIUS_VIEW
         radius = lerp(C.RADIUS_GRID, big_r, self.m) * s
-        self.draw_tile(item, x, y, w * s, h * s, 1.0, radius, bg, w * s > C.THUMB_SHORT_SIDE * 1.3)
+        self.draw_tile(item, x, y, w * s, h * s, 1.0, radius, bg, w * s > C.THUMB_SHORT_SIDE * 1.3,
+                       idx=self.morph_i, badge=self.m < 0.3)
 
     def draw_swipe(self, now, bg):
         """Las fotos van una junto a otra como páginas (como en Fotos del iPhone):
@@ -817,7 +974,7 @@ class App:
             t = abs(p)
             if b is None:  # sin foto de ese lado: se mueve con resistencia
                 x, y, w, h = self.viewer_rect(a)
-                self.draw_tile(self.items[a], x - p * self.page_width(a), y, w, h, 1.0, radius, bg, True)
+                self.draw_tile(self.items[a], x - p * self.page_width(a), y, w, h, 1.0, radius, bg, True, idx=a)
                 return
         page = self.page_width(a, b)
         # La que sale se desvanece y la que entra aparece conforme avanzan.
@@ -825,7 +982,7 @@ class App:
             x, y, w, h = self.viewer_rect(i)
             if alpha <= 0.01 or x + off + w < 0 or x + off > self.vw:
                 continue
-            self.draw_tile(self.items[i], x + off, y, w, h, alpha, radius, bg, True)
+            self.draw_tile(self.items[i], x + off, y, w, h, alpha, radius, bg, True, idx=i)
 
     def draw_level(self, lvl, now, alpha, view, bg):
         g, items = self.gfx, self.items
@@ -866,7 +1023,7 @@ class App:
             back = g.backdrop(item, force=True)
             if back:
                 g.image(back, -40, -40, self.vw + 80, self.vh + 80, alpha=a)
-        tex = g.screen(item, force=True)
+        tex = self.video_texture(nxt) or g.screen(item, force=True)
         if tex:
             g.image(tex, *self.frame_rect(item), alpha=a)
 
@@ -877,15 +1034,16 @@ class App:
         in_frame = self.mode == FRAME
         frame_amt = self.m if self.big_kind == FRAME and in_frame else 0.0
         item = self.items[self.fade[0] if self.fade else self.hero]
-        if self.settings.show_info and frame_amt > 0.01:
-            g.gradient.alpha = int(150 * frame_amt)
-            g.gradient.draw(dstrect=(0, self.vh - 260, self.vw, 260))
-            g.label(item.collection or "Fotos", 56, self.vh - 104, 26, frame_amt, bold=True)
-            g.label(item.date_text, 56, self.vh - 68, 16, frame_amt)
-        if in_frame:
-            left = self.hint_until - now
-            a = min(1.0, max(0.0, left / 0.8)) * min(1.0, max(0.0, (now - self.frame_since - 1.0) / 0.6))
-            g.pill("Mueve el mouse para explorar", self.vw / 2, self.vh - 84, 14, a)
+        with TH.using(TH.DARK):   # sobre fotos, siempre en oscuro
+            if self.settings.show_info and frame_amt > 0.01:
+                g.gradient.alpha = int(150 * frame_amt)
+                g.gradient.draw(dstrect=(0, self.vh - 260, self.vw, 260))
+                g.label(item.collection or "Fotos", 56, self.vh - 104, 26, frame_amt, bold=True)
+                g.label(item.date_text, 56, self.vh - 68, 16, frame_amt)
+            if in_frame:
+                left = self.hint_until - now
+                a = min(1.0, max(0.0, left / 0.8)) * min(1.0, max(0.0, (now - self.frame_since - 1.0) / 0.6))
+                g.pill("Mueve el mouse para explorar", self.vw / 2, self.vh - 84, 14, a)
         if self.mode == GRID:
             self.draw_grid_chrome(now, 1.0 - self.m)
         if self.mode == VIEWER and self.m > 0.01:
@@ -916,8 +1074,8 @@ class App:
         g = self.gfx
         if a <= 0.01:
             return
-        g.rect(0, 0, self.vw, BAR_H, (12, 12, 14), 0.94 * a)
-        g.rect(0, BAR_H - 1, self.vw, 1, (255, 255, 255), 0.07 * a)
+        g.rect(0, 0, self.vw, BAR_H, T.bar, T.bar_alpha * a)
+        g.rect(0, BAR_H - 1, self.vw, 1, T.hairline, T.hairline_alpha * a)
         self.ui_rects.append((0, 0, self.vw, BAR_H))
         y = (BAR_H - 44) / 2
         r = g.button("Presentación", 24, y, alpha=a, icon="play")
@@ -953,18 +1111,62 @@ class App:
             main, sub = "Colecciones", f"· {len(self.groups.coll_list)}"
         g.pill(main, 24, self.vh - 64, 13, a, anchor="left", sublabel=sub)
         bx, by = self.vw - 24 - 104, self.vh - 68
-        g.round_rect(bx, by, 104, 44, (44, 44, 48, 210), a)
-        g.rect(bx + 52, by + 12, 1, 20, (255, 255, 255), 0.16 * a)
-        g.rect(bx + 18, by + 21, 16, 2, C.TEXT, a)
-        g.rect(bx + 70, by + 21, 16, 2, C.TEXT, a)
-        g.rect(bx + 77, by + 14, 2, 16, C.TEXT, a)
+        g.round_rect(bx, by, 104, 44, T.pill, a)
+        g.rect(bx + 52, by + 12, 1, 20, T.hairline, 2 * T.hairline_alpha * a)
+        g.rect(bx + 18, by + 21, 16, 2, T.text, a)
+        g.rect(bx + 70, by + 21, 16, 2, T.text, a)
+        g.rect(bx + 77, by + 14, 2, 16, T.text, a)
         self.ui_rects.append((bx, by, 104, 44))
         self.hit((bx, by, 52, 44), lambda now: self.zoom(-1, now, at_mouse=False))
         self.hit((bx + 52, by, 52, 44), lambda now: self.zoom(1, now, at_mouse=False))
 
+    def draw_video_controls(self, p, a):
+        """Barra de pausa, progreso y tiempo, sobre la parte baja del video."""
+        with TH.using(TH.DARK):
+            self._draw_video_controls(p, a)
+
+    def _draw_video_controls(self, p, a):
+        g = self.gfx
+        w, h = 440, 48
+        x, y = (self.vw - w) / 2, self.vh - 66 - 12 - h
+        g.round_rect(x, y, w, h, (44, 44, 48, 215), a)
+        self.ui_rects.append((x, y, w, h))
+        bx, cy = x + 10, y + h / 2
+        playing = not p.paused and not p.ended and not getattr(p, "_pause_when_silent", False)
+        if playing:
+            g.rect(bx + 10, cy - 8, 5, 16, C.TEXT, a)
+            g.rect(bx + 20, cy - 8, 5, 16, C.TEXT, a)
+        else:
+            g.triangle(((bx + 11, cy - 9), (bx + 11, cy + 9), (bx + 26, cy)), C.TEXT, a)
+        self.hit((x, y, 48, h), self.toggle_video)
+        dur = p.duration or self.items[self.morph_i].duration
+        pos = p.position
+        label = f"{VID.fmt_time(pos)} / {VID.fmt_time(dur)}"
+        t = g.text(label, 13, (229, 229, 234))
+        tw, th = g.tsize(t)
+        t.alpha = int(255 * a)
+        t.draw(dstrect=(x + w - 18 - tw, cy - th / 2, tw, th))
+        px, pw = x + 52, w - 52 - 30 - tw
+        g.round_rect(px, cy - 2, pw, 4, (255, 255, 255, 56), a)
+        frac = min(pos / dur, 1.0) if dur else 0.0
+        if frac > 0:
+            g.round_rect(px, cy - 2, max(4, pw * frac), 4, (255, 255, 255, 255), a)
+
+        def seek(now, px=px, pw=pw, dur=dur):
+            try:
+                p.mpv.seek(max(0.0, (self.mx - px) / pw) * dur, reference="absolute")
+                p.set_paused(False)
+            except Exception:
+                pass
+            self.last_move = now
+        self.hit((px, y, pw, h), seek)
+
     def draw_viewer_chrome(self, now):
         g = self.gfx
         a = self.m
+        vp = self.player_for("view", self.morph_i)
+        if vp and not self.swipe:
+            self.draw_video_controls(vp, a)
         sel = self.items[self.current_viewer_index()]
         sub = f"· {sel.collection}" if sel.collection else None
         g.pill(sel.date_text, self.vw / 2, self.vh - 66, 14, a, sublabel=sub)
@@ -979,20 +1181,20 @@ class App:
             if self.neighbor(cur, d) is None:
                 continue
             y = self.vh / 2 - 24
-            g.round_rect(x, y, 48, 48, (44, 44, 48, 210), a)
+            g.round_rect(x, y, 48, 48, T.pill, a)
             cx, cy = x + 24, y + 24
             if d < 0:
-                g.triangle(((cx + 4, cy - 9), (cx + 4, cy + 9), (cx - 7, cy)), C.TEXT, a)
+                g.triangle(((cx + 4, cy - 9), (cx + 4, cy + 9), (cx - 7, cy)), T.text, a)
             else:
-                g.triangle(((cx - 4, cy - 9), (cx - 4, cy + 9), (cx + 7, cy)), C.TEXT, a)
+                g.triangle(((cx - 4, cy - 9), (cx - 4, cy + 9), (cx + 7, cy)), T.text, a)
             self.hit((x, y, 48, 48), lambda now, d=d: self.viewer_step(d, now))
 
     def draw_settings(self, now):
         g = self.gfx
         g.rect(0, 0, self.vw, self.vh, (0, 0, 0), 0.45)
-        w, h = 560, 400
+        w, h = 560, 476
         x, y = (self.vw - w) / 2, (self.vh - h) / 2
-        g.round_rect(x, y, w, h, (30, 30, 34, 245), 1.0, 28)
+        g.round_rect(x, y, w, h, T.panel, 1.0, 28)
         self.ui_rects.append((x, y, w, h))
         self.hits.append(((x, y, w, h), lambda now: None))  # clics dentro del panel no lo cierran
         g.label("Ajustes", x + 28, y + 24, 22, bold=True)
@@ -1002,10 +1204,18 @@ class App:
         rows_y = y + 96
 
         def row(ry, title, sub):
-            g.rect(x + 28, ry - 16, w - 56, 1, (255, 255, 255), 0.08)
+            g.rect(x + 28, ry - 16, w - 56, 1, T.hairline, T.hairline_alpha)
             g.label(title, x + 28, ry, 15, bold=True)
-            g.label(sub, x + 28, ry + 22, 13, color=(161, 161, 166))
+            g.label(sub, x + 28, ry + 22, 13, color=T.text_secondary)
 
+        row(rows_y, "Apariencia", "Automático: claro de día y oscuro de noche")
+        topts = [("light", "Claro"), ("dark", "Oscuro"), ("auto", "Automático")]
+        tw_ = sum(g.tsize(g.text(lbl, 13, T.text, True))[0] + 28 for _, lbl in topts) + 6
+        tsegs, _ = g.segmented(topts, st.theme, x + w - 28 - tw_, rows_y, h=40)
+        for val, rect in tsegs:
+            self.hit(rect, lambda now, v=val: self.set_theme(v))
+
+        rows_y += 76
         row(rows_y, "Volver a la presentación", "Tras este tiempo sin mover el mouse")
         opts = [(10, "10 s"), (15, "15 s"), (30, "30 s"), (60, "1 min")]
         seg_w = sum(g.tsize(g.text(lbl, 13, C.TEXT, True))[0] + 28 for _, lbl in opts) + 6
@@ -1027,15 +1237,15 @@ class App:
             self.queue = []
         self.hit(tr2, flip_shuffle)
 
-        g.rect(x + 28, y + h - 64, w - 56, 1, (255, 255, 255), 0.08)
-        g.label(f"Vitrina {__version__}  ·  github.com/Danzelote/Vitrina", x + 28, y + h - 48, 12, color=(161, 161, 166))
-        g.label("Apoya el proyecto en ko-fi.com/danzelot", x + 28, y + h - 30, 12, color=(161, 161, 166))
+        g.rect(x + 28, y + h - 64, w - 56, 1, T.hairline, T.hairline_alpha)
+        g.label(f"Vitrina {__version__}  ·  github.com/Danzelote/Vitrina", x + 28, y + h - 48, 12, color=T.text_secondary)
+        g.label("Apoya el proyecto en ko-fi.com/danzelot", x + 28, y + h - 30, 12, color=T.text_secondary)
 
     def draw_empty_library(self):
         g = self.gfx
         g.label_centered("No hay fotos todavía", self.vw / 2, self.vh / 2 - 40, 28, bold=True)
         g.label_centered("Corre Vitrina con --folder y una carpeta de fotos, o con --demo",
-                         self.vw / 2, self.vh / 2 + 6, 16, color=C.TEXT_DIM)
+                         self.vw / 2, self.vh / 2 + 6, 16, color=T.text_dim)
 
     # ------------------------------------------------------------------ ciclo
 
@@ -1053,5 +1263,6 @@ class App:
         while self.running:
             self.step()
             clock.tick(60)
+        self.close_all_videos()
         self.settings.save()
         pygame.quit()

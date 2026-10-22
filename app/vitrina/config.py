@@ -50,3 +50,10 @@ THUMB_CACHE = 320
 SCREEN_CACHE = 6
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"}
+VIDEO_EXTS = {".mp4", ".mov", ".m4v", ".avi", ".mkv", ".3gp"}
+
+# Video: versión ligera para reproducir y clip de vista previa
+VIDEO_MAX = (1280, 720)       # cabe en esto (o 720x1280 si es vertical)
+PREVIEW_SHORT_SIDE = 240
+PREVIEW_SECONDS = 5
+PREVIEW_DELAY = 1.5           # segundos con el mouse encima antes de la vista previa

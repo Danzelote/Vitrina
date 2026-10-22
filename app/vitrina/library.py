@@ -11,6 +11,8 @@ import hashlib
 import json
 import os
 import re
+import shutil
+import subprocess
 import threading
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -53,6 +55,21 @@ class Item:
     thumb_path: str = field(default="", repr=False)
     screen_path: str = field(default="", repr=False)
     backdrop_path: str = field(default="", repr=False)
+    is_video: bool = False
+    duration: float = 0.0
+    video_path: str = field(default="", repr=False)     # versión ligera para reproducir
+    preview_path: str = field(default="", repr=False)   # clip corto sin sonido
+    video_ready: bool = False
+
+    @property
+    def play_path(self):
+        """Lo que se reproduce: la versión ligera si ya está, si no el original."""
+        return self.video_path if self.video_ready else self.path
+
+    @property
+    def duration_text(self):
+        sec = max(0, int(round(self.duration)))
+        return f"{sec // 60}:{sec % 60:02d}"
 
     @property
     def aspect(self):
@@ -89,6 +106,32 @@ def _date_from_name(name):
     return None
 
 
+FFMPEG = shutil.which("ffmpeg")
+FFPROBE = shutil.which("ffprobe")
+
+
+def probe(path):
+    """Duración y fecha de un video, con ffprobe."""
+    try:
+        out = subprocess.run([FFPROBE, "-v", "error", "-print_format", "json", "-show_format", path],
+                             capture_output=True, text=True, timeout=20).stdout
+        fmt = json.loads(out).get("format", {})
+    except Exception:
+        return 0.0, None
+    dur = float(fmt.get("duration") or 0)
+    tags = {k.lower(): v for k, v in (fmt.get("tags") or {}).items()}
+    raw = tags.get("com.apple.quicktime.creationdate") or tags.get("creation_time")
+    date = None
+    if raw:
+        try:
+            date = datetime.fromisoformat(raw.replace("Z", "+00:00")[:25]).replace(tzinfo=None)
+        except ValueError:
+            date = None
+    if date and date.year < 1990:  # algunas cámaras ponen 1970 o 1904
+        date = None
+    return dur, date
+
+
 def scan(folder):
     """Lista las fotos de `folder` (incluye subcarpetas), de la más reciente a
     la más antigua. Cada subcarpeta de primer nivel es una colección."""
@@ -98,22 +141,30 @@ def scan(folder):
         rel = os.path.relpath(root, folder)
         collection = "" if rel == "." else rel.split(os.sep)[0]
         for name in sorted(files):
-            if name.startswith(".") or os.path.splitext(name)[1].lower() not in C.IMAGE_EXTS:
+            ext = os.path.splitext(name)[1].lower()
+            is_video = ext in C.VIDEO_EXTS
+            if name.startswith(".") or not (ext in C.IMAGE_EXTS or (is_video and FFMPEG and FFPROBE)):
                 continue
             path = os.path.join(root, name)
             try:
                 st = os.stat(path)
             except OSError:
                 continue
-            date = None
-            try:
-                with Image.open(path) as img:
-                    date = _date_from_exif(img)
-            except Exception:
-                continue
+            date, duration = None, 0.0
+            if is_video:
+                duration, date = probe(path)
+                if duration <= 0:
+                    continue
+            else:
+                try:
+                    with Image.open(path) as img:
+                        date = _date_from_exif(img)
+                except Exception:
+                    continue
             date = date or _date_from_name(name) or datetime.fromtimestamp(st.st_mtime)
             key = hashlib.sha1(f"{path}|{st.st_size}|{int(st.st_mtime)}".encode()).hexdigest()[:16]
-            items.append(Item(path=path, collection=collection, date=date, key=key))
+            items.append(Item(path=path, collection=collection, date=date, key=key,
+                              is_video=is_video, duration=duration))
     items.sort(key=lambda it: it.date, reverse=True)
     return items
 
@@ -140,15 +191,22 @@ class Processor:
             it.thumb_path = os.path.join(self.dir, it.key + "_t.jpg")
             it.screen_path = os.path.join(self.dir, it.key + "_s.jpg")
             it.backdrop_path = os.path.join(self.dir, it.key + "_b.jpg")
+            it.video_path = os.path.join(self.dir, it.key + "_v.mp4")
+            it.preview_path = os.path.join(self.dir, it.key + "_p.mp4")
             m = self.meta.get(it.key)
             if m and os.path.exists(it.thumb_path) and os.path.exists(it.screen_path):
-                it.width, it.height = m
+                it.width, it.height = m[0], m[1]
                 it.ready = True
                 self.done += 1
+            if it.is_video and os.path.exists(it.video_path) and os.path.exists(it.preview_path):
+                it.video_ready = True
+        self.videos_total = sum(1 for it in self.items if it.is_video)
+        self.videos_done = sum(1 for it in self.items if it.video_ready)
         self._thread.start()
 
     def _run(self):
         changed = 0
+        # Primero las imágenes (y las portadas de los videos): la cuadrícula se llena rápido.
         for it in self.items:
             if it.ready:
                 continue
@@ -164,11 +222,52 @@ class Processor:
                 it.failed = True
             self.done += 1
         self._save_meta()
+        # Después, la versión ligera de cada video (lo más lento).
+        for it in self.items:
+            if it.is_video and it.ready and not it.video_ready:
+                try:
+                    self._transcode(it)
+                    it.video_ready = True
+                except Exception:
+                    pass
+                self.videos_done += 1
+
+    def _poster(self, it):
+        """Un cuadro del video (a un tercio, máximo en el segundo 1) como imagen."""
+        at = min(1.0, it.duration / 3)
+        out = subprocess.run([FFMPEG, "-v", "error", "-ss", f"{at:.2f}", "-i", it.path, "-frames:v", "1",
+                              "-vf", f"scale='min({C.SCREEN_LONG_SIDE},iw)':-2", "-f", "image2pipe",
+                              "-vcodec", "png", "-"], capture_output=True, timeout=60).stdout
+        from io import BytesIO
+        return Image.open(BytesIO(out)).convert("RGB")
+
+    def _transcode(self, it):
+        mw, mh = C.VIDEO_MAX
+        if it.vertical:
+            mw, mh = mh, mw
+        tmp = it.video_path + ".tmp.mp4"
+        subprocess.run([FFMPEG, "-v", "error", "-y", "-i", it.path,
+                        "-vf", f"scale='min({mw},iw)':'min({mh},ih)':force_original_aspect_ratio=decrease:force_divisible_by=2",
+                        "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p",
+                        "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", tmp],
+                       check=True, capture_output=True, timeout=3600)
+        os.replace(tmp, it.video_path)
+        short = C.PREVIEW_SHORT_SIDE
+        scale = f"-2:{short}" if not it.vertical else f"{short}:-2"
+        tmp = it.preview_path + ".tmp.mp4"
+        subprocess.run([FFMPEG, "-v", "error", "-y", "-i", it.video_path, "-t", str(C.PREVIEW_SECONDS),
+                        "-vf", f"scale={scale}", "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "28",
+                        "-pix_fmt", "yuv420p", "-movflags", "+faststart", tmp],
+                       check=True, capture_output=True, timeout=600)
+        os.replace(tmp, it.preview_path)
 
     def _process(self, it):
-        with Image.open(it.path) as img:
-            img.draft("RGB", (C.SCREEN_LONG_SIDE, C.SCREEN_LONG_SIDE))  # JPEG: decodifica reducido
-            img = ImageOps.exif_transpose(img).convert("RGB")
+        if it.is_video:
+            img = self._poster(it)
+        else:
+            with Image.open(it.path) as img:
+                img.draft("RGB", (C.SCREEN_LONG_SIDE, C.SCREEN_LONG_SIDE))  # JPEG: decodifica reducido
+                img = ImageOps.exif_transpose(img).convert("RGB")
         it.width, it.height = img.size
         screen = img.copy()
         screen.thumbnail((C.SCREEN_LONG_SIDE, C.SCREEN_LONG_SIDE), Image.LANCZOS)
@@ -245,5 +344,31 @@ def make_demo(count=140, seed=7):
         sub = os.path.join(folder, coll)
         os.makedirs(sub, exist_ok=True)
         img.save(os.path.join(sub, f"{year}-{month:02d}-{day:02d}_{i:03d}.jpg"), "JPEG", quality=88)
+    if FFMPEG:
+        _make_demo_videos(folder, max(4, count // 12), rnd)
     open(marker, "w").close()
     return folder
+
+
+def _make_demo_videos(folder, n, rnd):
+    """Videos de prueba cortos con movimiento y un tono suave de audio."""
+    sources = ["testsrc2", "mandelbrot", "life=mold=10:ratio=0.5:death_color=#203040:life_color=#88c0ff",
+               "cellauto=rule=110", "smptehdbars"]
+    for k in range(n):
+        vertical = k % 3 == 1
+        size = "720x1280" if vertical else "1280x720"
+        src = sources[k % len(sources)]
+        dur = rnd.choice([6, 8, 12, 15])
+        year = rnd.choice([2023, 2024, 2025, 2026])
+        month = rnd.randint(1, 9 if year == 2026 else 12)
+        day = rnd.randint(1, 28)
+        coll = rnd.choice(["Viajes", "Perro", "Familia", "Cumpleaños"])
+        sub = os.path.join(folder, coll)
+        os.makedirs(sub, exist_ok=True)
+        out = os.path.join(sub, f"{year}-{month:02d}-{day:02d}_video{k:02d}.mp4")
+        freq = 220 + 110 * (k % 4)
+        subprocess.run([FFMPEG, "-v", "error", "-y", "-f", "lavfi", "-i", f"{src}{':' if '=' in src else '='}size={size}:rate=30",
+                        "-f", "lavfi", "-i", f"sine=frequency={freq}:sample_rate=44100",
+                        "-t", str(dur), "-af", "volume=0.15", "-c:v", "libx264", "-preset", "veryfast",
+                        "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", out],
+                       capture_output=True, timeout=300)

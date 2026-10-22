@@ -7,7 +7,7 @@ Cómo correr Vitrina en tu computadora mientras se desarrolla. Funciona en macOS
 En macOS, con [Homebrew](https://brew.sh):
 
 ```bash
-brew install python git
+brew install python git mpv ffmpeg
 git clone https://github.com/Danzelote/Vitrina.git ~/Vitrina
 cd ~/Vitrina
 python3 -m venv .venv
@@ -33,7 +33,7 @@ python app/main.py --folder ~/Pictures/MiCarpeta
 python app/main.py --demo --fullscreen
 ```
 
-La primera vez con una carpeta nueva, Vitrina prepara las miniaturas en segundo plano; arriba a la derecha se ve el avance. Las siguientes veces abre de inmediato. La caché vive en `~/.cache/vitrina`.
+La primera vez con una carpeta nueva, Vitrina prepara las miniaturas en segundo plano; abajo a la derecha se ve el avance. Los videos se procesan después de las fotos (una versión ligera para reproducir y un clip corto de vista previa); mientras tanto se reproduce el original. Sin `mpv` instalado, los videos se muestran con su portada. Las siguientes veces abre de inmediato. La caché vive en `~/.cache/vitrina`.
 
 ## Controles
 
@@ -45,9 +45,13 @@ La primera vez con una carpeta nueva, Vitrina prepara las miniaturas en segundo 
 | Clic en un año o un mes | Entra a él |
 | Selector de arriba (Años · Meses · Fotos · Colecciones) | Salta directo a ese nivel |
 | Clic en una colección | Muestra solo sus fotos (la etiqueta de arriba la quita) |
-| Ajustes | Tiempo de reposo, fecha y lugar, orden aleatorio |
+| Ajustes | Apariencia (claro, oscuro, automático), tiempo de reposo, fecha y lugar, orden aleatorio |
 | `+` / `-` | Zoom hacia el centro |
 | Clic en una foto | La abre en el visor |
+| Mouse quieto 1.5 s sobre un video | Vista previa en miniatura, sin sonido |
+| Abrir un video | Se reproduce desde el inicio, con el sonido entrando suave |
+| `Espacio` o el botón de la barra | Pausa / reproduce el video (con fundido de sonido) |
+| Clic en la barra de progreso | Salta a ese punto del video |
 | En el visor: arrastrar con dos dedos | La foto sigue a los dedos; al soltar cambia de foto si avanzaste lo suficiente, o regresa |
 | En el visor: flechas ← → o los botones laterales | Foto anterior o siguiente (respeta el filtro de colección) |
 | Clic en el visor o `Esc` | Regresa a la cuadrícula |
@@ -80,11 +84,12 @@ Las pruebas cubren la lógica de la cámara: que se alcance cada orilla desde cu
 | `app/vitrina/gfx.py` | Ayudantes de dibujo sobre SDL2 |
 | `app/vitrina/levels.py` | Grupos por mes, año y colección; su acomodo y sus mini presentaciones |
 | `app/vitrina/settings.py` | Ajustes guardados en `~/.config/vitrina/settings.json` |
+| `app/vitrina/video.py` | Reproducción de video con mpv, dibujada dentro de la interfaz |
+| `app/vitrina/theme.py` | Temas claro, oscuro y automático |
 | `app/vitrina/ui.py` | La interfaz: presentación, cuadrícula, niveles, visor y controles |
 
 ## Qué falta (siguientes versiones)
 
-- Videos (con mpv)
 - Búsqueda
 - Horario nocturno
 - La app web del celular

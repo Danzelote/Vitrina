@@ -6,6 +6,7 @@ con su mini presentación. Las coordenadas aquí son de pantalla (puntos)."""
 from dataclasses import dataclass, field
 
 from . import config as C
+from .theme import T
 
 MONTH_ABBR = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"]
 MONTH_NAMES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto",
@@ -184,7 +185,7 @@ def draw_tile(g, items, tile, now, alpha, bg, hover=0.0, title_size=16, folder=F
     if base:
         g.image(base, rx, ry, rw, rh, alpha)
     else:
-        g.rect(rx, ry, rw, rh, C.PLACEHOLDER, alpha)
+        g.rect(rx, ry, rw, rh, T.placeholder, alpha)
     if frac > 0 and len(picks) > 1:
         nxt = textures[(cur + 1) % len(picks)]
         if nxt:
@@ -203,11 +204,11 @@ def draw_empty(g, label, x, y, size, alpha, view=None):
     view = view or View()
     if alpha <= 0.003:
         return
-    g.round_rect(*view.rect(x, y, size, size), (255, 255, 255, 10), alpha, 16 * view.k)
-    _text(g, label, 15, (142, 142, 147), True, x + 14, y + size - 14, alpha, view, True)
+    g.round_rect(*view.rect(x, y, size, size), T.empty, alpha, 16 * view.k)
+    _text(g, label, 15, T.empty_text, True, x + 14, y + size - 14, alpha, view, True)
 
 
 def draw_year_label(g, title, sub, x, y, alpha, view=None):
     view = view or View()
-    h = _text(g, title, 34, C.TEXT, True, x, y, alpha, view)
-    _text(g, sub, 13, (161, 161, 166), False, x, y + h + 2, alpha, view)
+    h = _text(g, title, 34, T.text, True, x, y, alpha, view)
+    _text(g, sub, 13, T.text_secondary, False, x, y + h + 2, alpha, view)

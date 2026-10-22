@@ -1,3 +1,4 @@
 pygame-ce>=2.5
 Pillow>=10
 pillow-heif>=0.16  # fotos HEIC del iPhone
+python-mpv>=1.0  # videos (necesita mpv instalado: brew install mpv)

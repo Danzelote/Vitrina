@@ -10,6 +10,7 @@ import pygame
 from pygame._sdl2.video import Texture
 
 from . import config as C
+from .theme import T
 
 FONT_NAMES = ["helveticaneue", "helvetica", "sfnsdisplay", "inter", "dejavusans", "liberationsans", "arial"]
 
@@ -99,7 +100,7 @@ class Gfx:
         t.draw(dstrect=(x, y + h - r, r, r), flip_y=True)
         t.draw(dstrect=(x + w - r, y + h - r, r, r), flip_x=True, flip_y=True)
 
-    def image(self, tex, x, y, w, h, alpha=1.0, radius=0.0, corner_color=C.BG_GRID):
+    def image(self, tex, x, y, w, h, alpha=1.0, radius=0.0, corner_color=None):
         """Dibuja `tex` llenando el rectángulo, recortada desde el centro para
         conservar la proporción (como object-fit: cover)."""
         if alpha <= 0.003 or w <= 0 or h <= 0:
@@ -119,7 +120,7 @@ class Gfx:
         tex.draw(srcrect=pygame.Rect(round(src[0]), round(src[1]), max(1, round(src[2])), max(1, round(src[3]))),
                  dstrect=(x, y, w, h))
         if radius > 0:
-            self.corners(x, y, w, h, radius, corner_color, alpha)
+            self.corners(x, y, w, h, radius, corner_color or T.bg, alpha)
 
     # -- texturas de fotos ----------------------------------------------------
 
@@ -167,8 +168,9 @@ class Gfx:
             self.fonts[key] = pygame.font.SysFont(FONT_NAMES, size, bold=bold)
         return self.fonts[key]
 
-    def text(self, s, size, color=C.TEXT, bold=False):
+    def text(self, s, size, color=None, bold=False):
         """Texto renderizado a la resolución real; mide en puntos con tsize()."""
+        color = color or T.text
         key = (s, size, color, bold, self.dpi)
         tex = self.texts.get_item(key)
         if tex is None:
@@ -180,7 +182,8 @@ class Gfx:
     def tsize(self, tex):
         return tex.width / self.dpi, tex.height / self.dpi
 
-    def pill_shape(self, w, h, color=C.PILL_BG):
+    def pill_shape(self, w, h, color=None):
+        color = color or T.pill
         key = (int(w), int(h), color, self.dpi)
         tex = self.pills.get_item(key)
         if tex is None:
@@ -197,8 +200,8 @@ class Gfx:
         o 'left' (cx es la orilla izquierda). Devuelve su rectángulo."""
         if alpha <= 0.003:
             return None
-        t1 = self.text(label, size, C.TEXT, bold=True)
-        t2 = self.text(sublabel, size, C.TEXT_DIM) if sublabel else None
+        t1 = self.text(label, size, T.text, bold=True)
+        t2 = self.text(sublabel, size, T.text_dim) if sublabel else None
         w1, h1 = self.tsize(t1)
         w2, h2 = self.tsize(t2) if t2 else (0, 0)
         pad, gap = 18, 8
@@ -215,7 +218,7 @@ class Gfx:
             t2.draw(dstrect=(x + pad + w1 + gap, y + (h - h2) / 2, w2, h2))
         return (x, y, w, h)
 
-    def label(self, s, x, y, size, alpha=1.0, bold=False, color=C.TEXT):
+    def label(self, s, x, y, size, alpha=1.0, bold=False, color=None):
         if alpha <= 0.003:
             return
         t = self.text(s, size, color, bold)
@@ -223,7 +226,7 @@ class Gfx:
         w, h = self.tsize(t)
         t.draw(dstrect=(x, y, w, h))
 
-    def label_centered(self, s, cx, y, size, alpha=1.0, bold=False, color=C.TEXT):
+    def label_centered(self, s, cx, y, size, alpha=1.0, bold=False, color=None):
         t = self.text(s, size, color, bold)
         w, _ = self.tsize(t)
         self.label(s, cx - w / 2, y, size, alpha, bold, color)
@@ -257,8 +260,8 @@ class Gfx:
 
     def button(self, label, x, y, h=44, alpha=1.0, active=False, bold=True, size=14, icon=None, pad=18):
         """Botón tipo píldora. Devuelve su rectángulo (x, y, w, h)."""
-        fg = (17, 17, 17) if active else C.TEXT
-        bg = (245, 245, 247, 255) if active else (44, 44, 46, 255)
+        fg = T.active_fg if active else T.text
+        bg = T.active_bg if active else T.button
         t = self.text(label, size, fg, bold)
         tw, th = self.tsize(t)
         iw = 14 if icon else 0
@@ -277,16 +280,16 @@ class Gfx:
         """Selector segmentado. options = [(clave, etiqueta)]. Devuelve
         [(clave, rect)] y el ancho total."""
         size, pad, inset = 13, 14, 3
-        texts = [(k, self.text(lbl, size, (17, 17, 17) if k == active_key else C.TEXT, True)) for k, lbl in options]
+        texts = [(k, self.text(lbl, size, T.active_fg if k == active_key else T.text, True)) for k, lbl in options]
         widths = [self.tsize(t)[0] + pad * 2 for _, t in texts]
         total = sum(widths) + inset * 2
-        self.round_rect(x, y, total, h, (44, 44, 46, 255), alpha)
+        self.round_rect(x, y, total, h, T.button, alpha)
         out = []
         cx = x + inset
         for (k, t), w in zip(texts, widths):
             a = alpha * (0.4 if k in disabled else 1.0)
             if k == active_key:
-                self.round_rect(cx, y + inset, w, h - inset * 2, (245, 245, 247, 255), alpha)
+                self.round_rect(cx, y + inset, w, h - inset * 2, T.active_bg, alpha)
             tw, th = self.tsize(t)
             t.alpha = int(255 * min(a, 1.0))
             t.draw(dstrect=(cx + pad, y + (h - th) / 2, tw, th))
@@ -296,7 +299,7 @@ class Gfx:
 
     def toggle(self, on, x, y, alpha=1.0):
         w, h = 52, 32
-        self.round_rect(x, y, w, h, (36, 138, 61, 255) if on else (72, 72, 74, 255), alpha)
+        self.round_rect(x, y, w, h, (36, 138, 61, 255) if on else T.toggle_off, alpha)
         kx = x + (23 if on else 3)
         self.round_rect(kx, y + 3, 26, 26, (255, 255, 255, 255), alpha)
         return (x, y, w, h)
