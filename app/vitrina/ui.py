@@ -25,6 +25,7 @@ from . import night as NIGHT  # noqa: E402
 from . import nightclock as NC  # noqa: E402
 from . import i18n as I18N  # noqa: E402
 from .i18n import tr  # noqa: E402
+from .places import place_of  # noqa: E402
 from . import config as C  # noqa: E402
 from . import levels as LV  # noqa: E402
 from . import video as VID  # noqa: E402
@@ -76,7 +77,7 @@ class App:
         T.set(TH.resolve(self.settings.theme))
         I18N.set_lang(self.settings.language)
         self.zoom_sign = -1 if invert_zoom else 1
-        self.plane = cam.Plane(*cam.grid_shape(max(1, len(items))))
+        self.plane = cam.Plane(*cam.grid_shape(max(1, len(items))), len(items))
         self.groups = LV.Groups(items)
 
         now = time.monotonic()
@@ -193,6 +194,15 @@ class App:
     def grid_scale(self):
         return C.ZOOMS[self.zi]
 
+    def fitting_zoom(self):
+        """Con pocas fotos, el zoom más grande en que se ve toda la cuadrícula
+        (así no queda una fila escondida bajo la barra). Si no cabe, el de siempre."""
+        aw = self.vw - 2 * C.MARGIN_X
+        ah = self.vh - C.MARGIN_TOP - C.MARGIN_BOTTOM
+        fits = [k for k, z in enumerate(C.ZOOMS)
+                if self.plane.width * z <= aw and self.plane.height * z <= ah]
+        return max(fits) if fits else C.DEFAULT_ZOOM
+
     def big_dims(self, item, kind):
         ar = item.aspect if item.ready else 1.6
         if kind == FRAME:
@@ -257,7 +267,9 @@ class App:
     def start_video(self, role, i, path=None, audio=False, loop=False, max_w=1280, start_paused=False):
         self.stop_video(role, fade=False)
         item = self.items[i]
-        if not (VID.AVAILABLE and item.is_video and item.ready):
+        # Solo la versión ya preparada (H.264 ligera): los originales del celular
+        # (HEVC, 4K) son demasiado pesados y se ve la portada mientras tanto.
+        if not (VID.AVAILABLE and item.is_video and item.ready and item.video_ready):
             return
         try:
             p = VID.Player(self.ren, path or item.play_path, self.video_size(item, max_w), audio=audio,
@@ -316,6 +328,8 @@ class App:
         self.stop_video("next", fade=False)
         self.mode = GRID
         self.lvl = PHOTOS
+        if len(self.items) <= 64:
+            self.zi = self.fitting_zoom()
         s = self.grid_scale()
         cx, cy = cam.clamp(*self.plane.cell_center(self.hero), s, self.plane, self.vw, self.vh)
         self.move_camera(cx, cy, s, C.MORPH_TIME, now)
@@ -966,7 +980,7 @@ class App:
             else:
                 p.close()
         self.kb = {idx[k]: v for k, v in kb.items() if k in idx}
-        self.plane = cam.Plane(*cam.grid_shape(max(1, len(items))))
+        self.plane = cam.Plane(*cam.grid_shape(max(1, len(items))), len(items))
         self.groups = LV.Groups(items)
         self.queue, self.memory_queue, self.seq_pos, self._next = [], [], None, None
         self.hover_i = self.hover_group = None
@@ -1057,7 +1071,7 @@ class App:
                         and now - self.hover_since >= C.PREVIEW_DELAY and now >= self.long_until)
         if want_preview and not self.player_for("preview", hv):
             it = self.items[hv]
-            self.start_video("preview", hv, path=it.preview_path if it.video_ready else it.path, loop=True, max_w=360)
+            self.start_video("preview", hv, path=it.preview_path, loop=True, max_w=360)
         elif not want_preview and "preview" in self.players:
             self.stop_video("preview", fade=False)
         self.update_players(dt, now)
@@ -1282,7 +1296,7 @@ class App:
     def draw_tiles(self, tx, ty, s, alpha, bg):
         g = self.gfx
         pitch = C.CELL + C.GAP
-        c0 = max(0, int((-tx / s) // pitch) - 1)
+        c0 = max(0, int((-tx / s) // pitch) - 2)
         c1 = min(self.plane.cols - 1, int(((self.vw - tx) / s) // pitch) + 1)
         r0 = max(0, int((-ty / s) // pitch) - 1)
         r1 = min(self.plane.rows - 1, int(((self.vh - ty) / s) // pitch) + 1)
@@ -1299,14 +1313,15 @@ class App:
                     hovered = i
                     continue
                 a = alpha * (1.0 if self.matches(i) else 0.14)
-                x, y = tx + s * col * pitch, ty + s * row * pitch
+                cx, cy = self.plane.cell_center(i)
+                x, y = tx + s * (cx - C.CELL / 2), ty + s * (cy - C.CELL / 2)
                 self.draw_tile(self.items[i], x, y, C.CELL * s, C.CELL * s, a, radius, bg, idx=i, badge=True)
         if hovered is not None:
-            col, row = hovered % self.plane.cols, hovered // self.plane.cols
+            cx, cy = self.plane.cell_center(hovered)
             k = 1 + 0.07 * self.hover_amt
             w = C.CELL * s * k
-            x = tx + s * (col * pitch + C.CELL / 2) - w / 2
-            y = ty + s * (row * pitch + C.CELL / 2) - w / 2
+            x = tx + s * cx - w / 2
+            y = ty + s * cy - w / 2
             a = alpha * (1.0 if self.matches(hovered) else 0.14)
             if self.hover_amt > 0.05:
                 g.round_rect(x + 6, y + 12 * self.hover_amt, w - 12, w, (0, 0, 0, 255), 0.35 * self.hover_amt * a, radius)
@@ -1452,8 +1467,12 @@ class App:
             if frame_amt > 0.01:
                 top = self.vh - 104
                 if st.show_info:
-                    g.label(item.collection or tr("Fotos"), 56 + dx, self.vh - 104 + dy, 26, frame_amt, bold=True)
-                    g.label(item.date_text, 56 + dx, self.vh - 68 + dy, 16, frame_amt)
+                    # Con ubicación: el lugar de título y la colección junto a la fecha.
+                    place = place_of(item)
+                    title = place or item.collection or tr("Fotos")
+                    sub = item.date_text + (f"  ·  {item.collection}" if place and item.collection else "")
+                    g.label(title, 56 + dx, self.vh - 104 + dy, 26, frame_amt, bold=True)
+                    g.label(sub, 56 + dx, self.vh - 68 + dy, 16, frame_amt)
                 else:
                     top = self.vh - 68
                 if memory:
@@ -1545,19 +1564,23 @@ class App:
         self.ren.logical_size = (self.vw, self.vh)
         self.ren.draw_color = (0, 0, 0, 255)
         self.ren.clear()
-        n_hits, n_rects = len(self.hits), len(self.ui_rects)
-        self.draw_scene(now)
-        del self.hits[n_hits:]
-        del self.ui_rects[n_rects:]
-        if self.mode == FRAME:
-            shown = [(self.hero, 1.0)]
-            if self.fade:
-                shown.append((self.fade[0], self.fade[1].value(now)[0]))
-            for i, a in shown:
-                item = self.items[i]
-                tex = None if item.is_video else g.gray(item)
-                if tex is not None:
-                    g.image(tex, *self.kb_rect(i, self.frame_rect(item), now), alpha=0.6 * a, snap=False)
+        # Cada foto llena toda la pantalla (las verticales también), para que se
+        # vea a través de todos los números y no solo en una franja.
+        shown = [(self.hero, 1.0)]
+        if self.fade:
+            shown.append((self.fade[0], self.fade[1].value(now)[0]))
+        full = (0, 0, self.vw, self.vh)
+        for i, a in shown:
+            item = self.items[i]
+            vtex, va = self.video_layer(i, now) if item.is_video else (None, 0.0)
+            tex = vtex if va >= 1.0 else g.screen(item, force=True)
+            if tex is None:
+                continue
+            rect = self.kb_rect(i, full, now)
+            g.image(tex, *rect, alpha=a, snap=False)
+            gray = None if item.is_video else g.gray(item)
+            if gray is not None:
+                g.image(gray, *rect, alpha=0.6 * a, snap=False)
         self.ren.target = None
         # 2) Desenfocada y tenue.
         blur = self.blurred(scene, "nightblur", 3)
@@ -1692,8 +1715,11 @@ class App:
         if vp and not self.swipe:
             self.draw_video_controls(vp, a)
         sel = self.items[self.current_viewer_index()]
-        sub = f"· {sel.collection}" if sel.collection else None
+        where = place_of(sel) or sel.collection
+        sub = f"· {where}" if where else None
         g.pill(sel.date_text, self.vw / 2, self.vh - 66, 14, a, sublabel=sub)
+        if sel.is_video and not sel.video_ready and VID.AVAILABLE:
+            g.pill(tr("Preparando video…"), self.vw / 2, self.vh - 122, 13, a)
         r = g.pill(tr("‹  Volver"), 24, 24, 14, a, anchor="left")
         self.hit(r, self.close_viewer)
         label = tr("Presentación desde aquí")

@@ -27,6 +27,7 @@ from .. import __version__
 from .. import config as C
 from .. import library
 from .. import livelib
+from ..places import place_of
 from ..settings import config_dir
 
 STATIC = os.path.join(os.path.dirname(__file__), "static")
@@ -323,7 +324,8 @@ class Handler(BaseHTTPRequestHandler):
         if not self.need_device():
             return
         out = [{"id": it.key, "c": it.collection, "d": it.date.strftime("%Y-%m-%d"), "v": it.is_video,
-                "dur": round(it.duration), "r": it.ready} for it in self.v.lib.snapshot if not it.failed]
+                "dur": round(it.duration), "r": it.ready, "p": place_of(it)}
+               for it in self.v.lib.snapshot if not it.failed]
         self.send(200, out)
 
     def image(self, kind, key):

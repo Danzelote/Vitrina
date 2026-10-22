@@ -34,6 +34,9 @@ except Exception:  # pragma: no cover
 # Parámetros del render por software de libmpv (render.h)
 _SW_SIZE, _SW_FORMAT, _SW_STRIDE, _SW_POINTER = 17, 18, 19, 20
 FADE_IN_FRAME = 0.25   # segundos en que el primer cuadro aparece sobre la portada
+AUDIO_IN = 0.2         # el sonido entra en 0.2 s (corto, para oírlo desde el inicio)
+AUDIO_OUT = 0.45       # y sale en 0.45 s
+AUDIO_TAIL = 0.35      # espera a que suene lo que ya estaba en el búfer antes de pausar o cerrar
 _THREADS = []          # hilos de video vivos (para esperarlos al salir)
 
 
@@ -63,7 +66,7 @@ class Player:
         self.loop = loop
         self.volume = 0.0
         self.target_volume = 0.0 if start_paused or not audio else 100.0
-        self.fade_speed = 200.0          # unidades de volumen por segundo (0.5 s)
+        self.silent_since = None         # cuándo llegó a 0 el volumen (para el búfer de audio)
         self.want_pause = start_paused
         self.pause_when_silent = False
         self.closing = False
@@ -110,7 +113,9 @@ class Player:
         return arr, keep
 
     def _run(self):
-        opts = dict(vo="libmpv", hwdec="auto-safe", keep_open="yes", loglevel="error",
+        # Sin decodificación por hardware: con el dibujo por software de libmpv
+        # puede fallar (VideoToolbox en macOS) y las Macs viejas no la tienen.
+        opts = dict(vo="libmpv", hwdec="no", keep_open="yes", loglevel="error", audio_buffer=0.1,
                     input_default_bindings=False, input_vo_keyboard=False, osc=False,
                     pause=self.want_pause)
         if not self.audio:
@@ -228,17 +233,26 @@ class Player:
     def update(self, dt, now=None):
         """Sube el último cuadro a la textura y ajusta el volumen. Devuelve False
         cuando ya se pidió cerrar y terminó el fundido de salida."""
+        now = time.monotonic() if now is None else now
         if self.audio:
-            step = self.fade_speed * dt
             if self.volume < self.target_volume:
-                self.volume = min(self.target_volume, self.volume + step)
+                # Sube solo cuando el video ya se ve: así el sonido entra junto con la imagen.
+                if self.has_frame:
+                    self.volume = min(self.target_volume, self.volume + 100.0 / AUDIO_IN * dt)
             elif self.volume > self.target_volume:
-                self.volume = max(self.target_volume, self.volume - step)
-            if self.volume <= 0.0 and self.pause_when_silent:
+                self.volume = max(self.target_volume, self.volume - 100.0 / AUDIO_OUT * dt)
+            if self.volume > 0.0:
+                self.silent_since = None
+            elif self.silent_since is None:
+                self.silent_since = now
+            drained = self.silent_since is not None and now - self.silent_since >= AUDIO_TAIL
+            if self.pause_when_silent and drained:
                 self.desired_pause = True
                 self.paused = True
                 self.pause_when_silent = False
-        if self.closing and (not self.audio or self.volume <= 0.0):
+        else:
+            drained = True
+        if self.closing and (not self.audio or drained or not self.has_frame):
             self.close()
             return False
         with self._lock:
@@ -252,7 +266,7 @@ class Player:
                 self.texture.update(surf)
         if fresh and not self.has_frame:
             self.has_frame = True
-            self.first_frame_at = now if now is not None else time.monotonic()
+            self.first_frame_at = now
         return True
 
     def close(self):

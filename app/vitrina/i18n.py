@@ -42,6 +42,7 @@ EN = {
     # Visor
     "‹  Volver": "‹  Back",
     "Presentación desde aquí": "Slideshow from here",
+    "Preparando video…": "Preparing video…",
     # Ajustes
     "Listo": "Done",
     "Pantalla": "Display",

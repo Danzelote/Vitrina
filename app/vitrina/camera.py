@@ -17,9 +17,17 @@ from . import config as C
 
 @dataclass
 class Plane:
-    """Tamaño de la cuadrícula en unidades de plano."""
+    """Tamaño de la cuadrícula en unidades de plano. Con `count`, la última
+    fila (si queda incompleta) va centrada."""
     cols: int
     rows: int
+    count: int = None
+
+    def _row_offset(self, row):
+        if self.count is None or row != self.rows - 1:
+            return 0.0
+        missing = self.cols * self.rows - self.count
+        return max(0, missing) * (C.CELL + C.GAP) / 2
 
     @property
     def width(self):
@@ -32,14 +40,18 @@ class Plane:
     def cell_center(self, i):
         col, row = i % self.cols, i // self.cols
         pitch = C.CELL + C.GAP
-        return col * pitch + C.CELL / 2, row * pitch + C.CELL / 2
+        return self._row_offset(row) + col * pitch + C.CELL / 2, row * pitch + C.CELL / 2
 
     def index_at(self, px, py, count):
         """Índice de la miniatura en el punto (px, py) del plano, o None."""
         pitch = C.CELL + C.GAP
-        if px < 0 or py < 0:
+        if py < 0:
             return None
-        col, row = int(px // pitch), int(py // pitch)
+        row = int(py // pitch)
+        px -= self._row_offset(row)
+        if px < 0:
+            return None
+        col = int(px // pitch)
         if col >= self.cols or row >= self.rows:
             return None
         if px - col * pitch > C.CELL or py - row * pitch > C.CELL:
@@ -48,9 +60,17 @@ class Plane:
         return i if i < count else None
 
 
-def grid_shape(count, aspect=1.6, min_cols=8):
-    """Columnas y filas para `count` fotos, con proporción parecida a la pantalla."""
-    cols = max(min_cols, round((count * aspect) ** 0.5))
+def grid_shape(count, aspect=1.6, square_up_to=64):
+    """Columnas y filas para `count` fotos. Con pocas fotos la cuadrícula es
+    cuadrada y crece desde el centro (4 → 2×2, 9 → 3×3); con muchas, toma
+    una proporción parecida a la pantalla."""
+    count = max(1, count)
+    if count <= square_up_to:
+        cols = -(-int(count ** 0.5 * 1000) // 1000)          # techo de la raíz
+        while cols * cols < count:
+            cols += 1
+    else:
+        cols = round((count * aspect) ** 0.5)
     rows = max(1, -(-count // cols))
     return cols, rows
 

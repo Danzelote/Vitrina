@@ -125,7 +125,7 @@ Las fotos **viven en la propia Mac**. No dependen de Google Drive ni de iCloud.
 ### Metadatos
 
 - **La fecha** suele llegar bien al subir directo desde la galería (mucho mejor que por WhatsApp). Si falta, se usa la fecha del archivo.
-- **La ubicación** a menudo se pierde: los navegadores de los celulares la quitan por privacidad (por ejemplo [WebKit bug 207088](https://bugs.webkit.org/show_bug.cgi?id=207088)). Por eso las **colecciones hacen de "lugar"**. Subir desde una computadora conserva todos los datos. Una app nativa en el futuro podría pedir permiso para leer la ubicación.
+- **La ubicación** llega si el celular la incluye (en el iPhone, al elegir las fotos aparece "Ubicación incluida"; algunos navegadores la quitan, ver [WebKit bug 207088](https://bugs.webkit.org/show_bug.cgi?id=207088)). Con ubicación, la Vitrina muestra el lugar ("Oaxaca de Juárez, México") sin internet: busca la ciudad más cercana en una lista de GeoNames incluida con la app. Sin ubicación, las **colecciones hacen de "lugar"**.
 
 ### Videos del iPhone
 

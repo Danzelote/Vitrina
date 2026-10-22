@@ -28,6 +28,22 @@ try:  # HEIC del iPhone, si está instalado
 except ImportError:  # pragma: no cover
     pass
 
+# libheif no siempre tolera decodificar en dos hilos a la vez: los HEIC van de uno en uno.
+HEIF_LOCK = threading.Lock()
+
+
+def open_image(path, decode=True):
+    """Image.open, pero los HEIC se abren y decodifican sin que se encimen hilos.
+    Con decode=False solo se leen los datos (fecha, lugar), sin la imagen."""
+    if os.path.splitext(path)[1].lower() in (".heic", ".heif"):
+        with HEIF_LOCK:
+            img = Image.open(path)
+            if decode:
+                img.load()
+            return img
+    return Image.open(path)
+
+
 MONTHS = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio",
           "agosto", "septiembre", "octubre", "noviembre", "diciembre"]
 
@@ -61,6 +77,8 @@ class Item:
     video_path: str = field(default="", repr=False)     # versión ligera para reproducir
     preview_path: str = field(default="", repr=False)   # clip corto sin sonido
     video_ready: bool = False
+    lat: float = None                                   # ubicación, si la foto la trae
+    lon: float = None
 
     @property
     def play_path(self):
@@ -97,6 +115,28 @@ def _date_from_exif(img):
     return None
 
 
+def _gps_from_exif(img):
+    """(latitud, longitud) de la foto, o (None, None)."""
+    try:
+        gps = img.getexif().get_ifd(0x8825)
+        if not gps or 2 not in gps or 4 not in gps:
+            return None, None
+
+        def deg(v):
+            d, m, s = (float(x) for x in v)
+            return d + m / 60 + s / 3600
+        lat, lon = deg(gps[2]), deg(gps[4])
+        if str(gps.get(1, "N")).upper().startswith("S"):
+            lat = -lat
+        if str(gps.get(3, "E")).upper().startswith("W"):
+            lon = -lon
+        if lat == 0 and lon == 0:
+            return None, None
+        return lat, lon
+    except Exception:
+        return None, None
+
+
 def _date_from_name(name):
     for pat in _DATE_PATTERNS:
         m = pat.search(name)
@@ -119,7 +159,7 @@ def probe(path):
                              capture_output=True, text=True, timeout=20).stdout
         fmt = json.loads(out).get("format", {})
     except Exception:
-        return 0.0, None
+        return 0.0, None, (None, None)
     dur = float(fmt.get("duration") or 0)
     tags = {k.lower(): v for k, v in (fmt.get("tags") or {}).items()}
     raw = tags.get("com.apple.quicktime.creationdate") or tags.get("creation_time")
@@ -131,7 +171,10 @@ def probe(path):
             date = None
     if date and date.year < 1990:  # algunas cámaras ponen 1970 o 1904
         date = None
-    return dur, date
+    loc = tags.get("com.apple.quicktime.location.iso6709") or tags.get("location") or ""
+    m = re.match(r"([+-]\d+(?:\.\d+)?)([+-]\d+(?:\.\d+)?)", loc)
+    gps = (float(m.group(1)), float(m.group(2))) if m else (None, None)
+    return dur, date, gps
 
 
 def media_kind(name):
@@ -166,20 +209,22 @@ def scan_file(folder, path):
         st = os.stat(path)
     except OSError:
         return None
-    date, duration = None, 0.0
+    date, duration, lat, lon = None, 0.0, None, None
     if kind == "video":
-        duration, date = probe(path)
+        duration, date, (lat, lon) = probe(path)
         if duration <= 0:
             return None
     else:
         try:
-            with Image.open(path) as img:
+            with open_image(path, decode=False) as img:
                 date = _date_from_exif(img)
+                lat, lon = _gps_from_exif(img)
         except Exception:
             return None
     date = date or _date_from_name(name) or datetime.fromtimestamp(st.st_mtime)
     return Item(path=path, collection=collection_of(folder, path), date=date,
-                key=item_key(path, st.st_size, st.st_mtime), is_video=kind == "video", duration=duration)
+                key=item_key(path, st.st_size, st.st_mtime), is_video=kind == "video", duration=duration,
+                lat=lat, lon=lon)
 
 
 def scan(folder):
@@ -345,7 +390,7 @@ class Processor:
         if it.is_video:
             img = self._poster(it)
         else:
-            with Image.open(it.path) as img:
+            with open_image(it.path) as img:
                 img.draft("RGB", (C.SCREEN_LONG_SIDE, C.SCREEN_LONG_SIDE))  # JPEG: decodifica reducido
                 img = ImageOps.exif_transpose(img).convert("RGB")
         it.width, it.height = img.size

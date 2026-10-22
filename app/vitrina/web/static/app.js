@@ -296,7 +296,7 @@ function openViewer(id) {
   const date = d.toLocaleDateString(LANG === "en" ? "en-US" : "es-MX", { day: "numeric", month: "long", year: "numeric" });
   v.innerHTML = `
     <div class="top"><button class="x" id="vx">${t("Cerrar")}</button>
-      <div class="meta">${esc(date)}<br>${esc(collName(p.c))}</div><span style="width:52px"></span></div>
+      <div class="meta">${esc(date)}<br>${esc(p.p ? (p.c ? p.p + " · " + p.c : p.p) : collName(p.c))}</div><span style="width:52px"></span></div>
     <div class="pic"><img src="/s/${p.id}.jpg" alt=""></div>
     <div class="bottom"><button class="btn" id="vm">${t("Mover")}</button><button class="btn del" id="vd">${t("Borrar")}</button></div>`;
   v.hidden = false;

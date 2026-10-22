@@ -65,3 +65,12 @@ def test_index_at():
     assert p.index_at(pitch + 5, pitch + 5, 30) == 11
     assert p.index_at(C.CELL + 5, 5, 30) is None  # en el espacio entre fotos
     assert p.index_at(5, 5, 0) is None
+
+
+def test_small_grids_grow_from_center():
+    assert cam.grid_shape(4) == (2, 2) and cam.grid_shape(9) == (3, 3) and cam.grid_shape(7) == (3, 3)
+    plane = cam.Plane(*cam.grid_shape(7), 7)
+    # La última fila (una sola foto) queda centrada debajo de la de en medio.
+    assert plane.cell_center(6)[0] == plane.cell_center(4)[0]
+    for i in range(7):
+        assert plane.index_at(*plane.cell_center(i), 7) == i

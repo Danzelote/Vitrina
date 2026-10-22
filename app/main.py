@@ -13,6 +13,22 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from vitrina import library  # noqa: E402
 
 
+def crash_log():
+    """Si Python se cierra de golpe (por ejemplo, una falla en una librería de
+    video), deja el rastro en ~/.cache/vitrina/fallo.log para poder arreglarlo."""
+    import faulthandler
+    path = os.path.join(library.cache_dir(), "fallo.log")
+    try:
+        if os.path.getsize(path) > 0:
+            print(f"La vez pasada Vitrina se cerró de golpe. Detalles en: {path}")
+            os.replace(path, path + ".anterior")
+    except OSError:
+        pass
+    f = open(path, "w")
+    faulthandler.enable(file=f, all_threads=True)
+    return f
+
+
 def main():
     ap = argparse.ArgumentParser(prog="vitrina", description="Portarretratos digital para Macs viejas.")
     ap.add_argument("--folder", help="carpeta con fotos (incluye subcarpetas; cada una es una colección)")
@@ -23,6 +39,7 @@ def main():
     ap.add_argument("--debug-input", action="store_true", help="muestra en la terminal los eventos del trackpad")
     ap.add_argument("--no-web", action="store_true", help="sin la app del celular")
     args = ap.parse_args()
+    _log = crash_log()  # noqa: F841 (debe seguir abierto mientras corre la app)
 
     folder = args.folder
     if folder:
