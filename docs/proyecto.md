@@ -193,6 +193,7 @@ vitrina/
 | Almacenamiento | Local en la Mac |
 | Agrupación | Por fecha (meses y años) y por colecciones |
 | App | Nativa, no navegador |
+| Tecnología de la app | Python + SDL2 (pygame-ce) + mpv. Ligera, fácil de leer y de iterar. La lógica va separada del dibujo para poder reescribir en Rust solo una pieza si hiciera falta |
 
 ---
 
