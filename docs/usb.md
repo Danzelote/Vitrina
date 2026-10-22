@@ -1,6 +1,6 @@
 # La USB de Vitrina
 
-La imagen de la USB arranca la Mac directo en Vitrina: sin escritorio, sin menú de arranque y con el WiFi de las MacBook ya incluido. Por ahora es para **probar sin instalar**: no toca el disco de la Mac, y las fotos que subas se borran al apagar.
+La imagen de la USB arranca la Mac directo en Vitrina: sin escritorio, sin menú de arranque y con el WiFi de las MacBook ya incluido. Sirve para **probar sin instalar** (no toca el disco de la Mac, y las fotos que subas se borran al apagar) y, cuando estés listo, para **instalar** Vitrina en la Mac.
 
 ## Lo que necesitas
 
@@ -32,6 +32,19 @@ No hace falta presionar nada más: la imagen arranca sola, sin el menú invisibl
 2. **Celular:** escanea el código QR que aparece y sube unas fotos.
 3. **Apagar:** la tecla de encendido (o Ajustes → Pantalla → **Apagar…**) pregunta si quieres **Reposo**, **Apagar** o **Reiniciar**. Dejarla presionada unos segundos apaga de golpe.
 4. **Cerrar la tapa** pone la Mac en reposo; al abrirla sigue donde se quedó.
+
+## Instalar en la Mac
+
+Cuando ya probaste que todo funciona desde la USB:
+
+1. **Ajustes → Pantalla → Instalar en esta Mac…**
+2. Revisa el disco que encontró y lee el aviso: **se borra todo el disco** (macOS, programas y archivos). Si quieres conservar algo de esa Mac, sácalo antes.
+3. **Continuar** → espera la cuenta atrás → **Borrar e instalar**. Tarda unos minutos; no apagues la Mac ni quites la USB.
+4. Al terminar: quita la USB y **Reiniciar**. Vitrina arranca sola desde el disco.
+
+Las fotos, el WiFi, los ajustes, los celulares conectados y el firmware de la cámara (que se toma del macOS antes de borrarlo) pasan a la instalación.
+
+Detalles técnicos: el disco queda con una partición de arranque EFI (300 MB) y el sistema en ext4. Las Mac arrancan con `/EFI/BOOT` sin tocar su NVRAM. El instalador es [`os/rootfs/opt/vitrina/install.sh`](../os/rootfs/opt/vitrina/install.sh) y cada imagen se prueba instalándola en un disco virtual y arrancándolo con UEFI ([`os/install-test.sh`](../os/install-test.sh)).
 
 ## Qué revisar en la Mac vieja
 

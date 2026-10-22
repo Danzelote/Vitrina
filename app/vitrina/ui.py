@@ -28,6 +28,8 @@ from .i18n import tr  # noqa: E402
 from .places import place_of  # noqa: E402
 from . import wifi as WIFI  # noqa: E402
 from . import qrscan as QR  # noqa: E402
+from . import splash as SPL  # noqa: E402
+from . import installer as INST  # noqa: E402
 from . import config as C  # noqa: E402
 from . import levels as LV  # noqa: E402
 from . import video as VID  # noqa: E402
@@ -66,17 +68,20 @@ def inside(rect, x, y):
 
 class App:
     def __init__(self, items, processor=None, fullscreen=False, invert_zoom=False, size=(1280, 800),
-                 debug_input=False, lib=None):
+                 debug_input=False, lib=None, splash=None):
         self.debug_input = debug_input
         self.lib = lib                      # biblioteca en vivo (fotos que llegan del celular)
         self.events = queue.Queue()         # órdenes del servidor web, se atienden en este hilo
         self.web = None                     # servidor web (lo asigna main.py)
         pygame.display.init()
         pygame.font.init()
-        self.win = Window("Vitrina", size=size, resizable=True, allow_high_dpi=True)
-        if fullscreen:
-            self.win.set_fullscreen(True)
-        self.ren = Renderer(self.win, accelerated=-1, vsync=True)
+        if splash:      # la ventana ya está abierta con el logo de arranque
+            self.win, self.ren = splash.win, splash.ren
+        else:
+            self.win = Window("Vitrina", size=size, resizable=True, allow_high_dpi=True)
+            if fullscreen:
+                self.win.set_fullscreen(True)
+            self.ren = Renderer(self.win, accelerated=-1, vsync=True)
         self.gfx = Gfx(self.ren)
         self.fit_to_window()
         self.items = list(items)
@@ -197,7 +202,10 @@ class App:
         self.bright = self.settings.brightness   # brillo que se ve ahorita (se acerca al objetivo)
         self.bright_fast_until = -1e9
         self.calib = None           # calibración del brillo mínimo en curso
-        self.intro = {"start": now, "phase": "load"}   # logo de arranque (sigue al de Linux)
+        # Logo de arranque: sigue la animación del que se vio mientras cargaba (mismo reloj).
+        self.intro = {"start": splash.start if splash else now, "phase": "load"}
+        self.shutting = None        # apagando o reiniciando: solo el logo
+        self.inst = None            # instalar en esta Mac: {"stage", "at", "ins", "disk"}
         self.help_open = False      # lista de atajos de teclado (tecla H)
         self.help_at = 0.0
         self.help_amt = 0.0
@@ -818,6 +826,20 @@ class App:
                 else:
                     self.open_power(now)
             return
+        if self.shutting:
+            return
+        if self.inst:
+            if e.type == pygame.KEYDOWN and e.key == pygame.K_ESCAPE and self.inst["stage"] in ("info", "confirm", "error"):
+                self.inst = None
+            elif e.type == pygame.MOUSEMOTION:
+                self.mx, self.my = e.pos
+                self.show_pointer(True)
+            elif e.type == pygame.MOUSEBUTTONUP and e.button == 1:
+                for rect, fn in reversed(self.hits):
+                    if inside(rect, self.mx, self.my):
+                        fn(now)
+                        break
+            return
         if self.scan:
             if e.type == pygame.KEYDOWN and e.key == pygame.K_ESCAPE:
                 self.stop_scan()
@@ -1087,6 +1109,8 @@ class App:
                 return
         if self.power_dlg:
             self.close_power(now)
+            return
+        if self.inst:
             return
         if self.settings_open:
             self.close_settings(now)
@@ -1602,6 +1626,9 @@ class App:
         g.begin_frame(now=now)
         self.hits = []
         self.ui_rects = []
+        if self.shutting:
+            self.draw_shutting(now)
+            return
         if self.calib:
             self.draw_calib(now)
             return
@@ -1640,31 +1667,193 @@ class App:
         self.draw_night(now)
         self.draw_help(now)
         self.draw_power(now)
+        if self.inst:
+            self.draw_install(now)
         if self.intro:
             self.draw_intro(now)
         self.draw_dim()
 
+    # ------------------------------------------------------------------ instalar
+
+    def open_install(self, now):
+        self.close_settings(now)
+        ins = INST.Installer()
+        ins.detect()
+        self.inst = {"stage": "info", "at": now, "ins": ins, "disk": None}
+        self.show_pointer(True)
+
+    def wrap(self, text, size, width, bold=False):
+        g = self.gfx
+        lines, cur = [], ""
+        for word in text.split():
+            t = (cur + " " + word).strip()
+            if cur and g.tsize(g.text(t, size, T.text, bold))[0] > width:
+                lines.append(cur)
+                cur = word
+            else:
+                cur = t
+        if cur:
+            lines.append(cur)
+        return lines
+
+    def draw_install(self, now):
+        """Instalar Vitrina en el disco: aviso, confirmación (con cuenta atrás),
+        avance y listo. Mientras instala no se puede cerrar."""
+        g, it = self.gfx, self.inst
+        ins, stage = it["ins"], it["stage"]
+        if stage == "run":
+            if ins.done:
+                it["stage"], it["at"] = "done", now
+            elif ins.error and not ins.running:
+                it["stage"], it["at"] = "error", now
+            stage = it["stage"]
+        self.hits, self.ui_rects = [], []
+        g.rect(0, 0, self.vw, self.vh, (0, 0, 0), 0.55)
+        w = 560
+        cx = self.vw / 2
+        red = (255, 69, 58)
+        body = []           # (texto, tamaño, color, negrita)
+        buttons = []        # (texto, acción, estilo)
+        title = ""
+        if stage == "info":
+            title = tr("Instalar Vitrina en esta Mac")
+            body.append((tr("Vitrina quedará en el disco de la Mac y arrancará sola, sin la USB. "
+                            "Las fotos, el WiFi y los ajustes de ahora se pasan a la instalación."),
+                         14, T.text_secondary, False))
+            if ins.disks is None:
+                body.append((tr("Buscando el disco…"), 14, T.text, True))
+            elif not ins.disks:
+                body.append((tr("No se encontró un disco interno donde instalar."), 14, red, True))
+            else:
+                dev, size, model = ins.disks[0]
+                it["disk"] = ins.disks[0]
+                body.append((tr("Disco: {m} · {s}", m=model or dev, s=INST.human_size(size)), 14, T.text, True))
+                body.append((tr("Se borrará TODO lo que tiene este disco: macOS, programas, documentos y fotos. "
+                                "No se puede deshacer."), 14, red, True))
+            buttons.append((tr("Cancelar"), "close", "normal"))
+            if ins.disks:
+                buttons.append((tr("Continuar"), "confirm", "active"))
+        elif stage == "confirm":
+            title = tr("¿Borrar el disco e instalar?")
+            dev, size, model = it["disk"]
+            body.append((tr("Último aviso: se borrará {m} ({s}) y no habrá forma de recuperar lo que tiene.",
+                            m=model or dev, s=INST.human_size(size)), 14, T.text_secondary, False))
+            body.append((tr("Deja la Mac conectada a la corriente. Tarda unos minutos."), 14, T.text_secondary, False))
+            left = 5 - int(now - it["at"])
+            buttons.append((tr("Cancelar"), "close", "normal"))
+            if left > 0:
+                buttons.append((tr("Borrar e instalar ({n})", n=left), None, "disabled"))
+            else:
+                buttons.append((tr("Borrar e instalar"), "go", "danger"))
+        elif stage == "run":
+            title = tr("Instalando Vitrina…")
+            step = tr("Paso {n} de {t} · {s}", n=max(1, ins.step), t=ins.total, s=tr(ins.step_text) if ins.step_text
+                      else tr("Empezando"))
+            body.append((step, 14, T.text, True))
+            body.append(("__bar__", 0, None, False))
+            body.append((tr("No apagues la Mac ni quites la USB."), 13, T.text_secondary, False))
+        elif stage == "done":
+            title = tr("Listo")
+            body.append((tr("Vitrina quedó instalada. Quita la USB y reinicia: arrancará sola desde el disco."),
+                         14, T.text_secondary, False))
+            buttons.append((tr("Reiniciar"), "reboot", "active"))
+        else:
+            title = tr("No se pudo instalar")
+            body.append((ins.error or "?", 14, red, True))
+            body.append((tr("Puedes intentarlo otra vez. Los detalles están en el Diagnóstico del celular."),
+                         13, T.text_secondary, False))
+            buttons.append((tr("Cerrar"), "close", "normal"))
+        # Medidas
+        laid = []
+        for text, size, color, bold in body:
+            if text == "__bar__":
+                laid.append(("__bar__", 0, None, False, 34))
+                continue
+            for ln in self.wrap(text, size, w - 64, bold):
+                laid.append((ln, size, color, bold, size + 8))
+            laid.append(("", 0, None, False, 10))
+        logo_h = 70 if stage == "run" else 0
+        h = 32 + logo_h + 34 + 16 + sum(r[4] for r in laid) + (84 if buttons else 18)
+        x, y = cx - w / 2, (self.vh - h) / 2
+        g.round_rect(x, y, w, h, T.panel, 1.0, 22)
+        self.hits.append(((x, y, w, h), lambda now: None))
+        yy = y + 32
+        if stage == "run":                  # el logo respirando mientras instala
+            sq = g.shape(round(SPL.SQ * 2), round(SPL.SQ * 2), 14)
+            k = 0.6
+            for sx, sy, size in SPL.square_rects(self.vw, self.vh, now - it["at"]):
+                wx, wy = SPL.logo_origin(self.vw, self.vh)
+                px = cx - 42 * k + (sx - wx) * k
+                py = yy + (sy - wy) * k
+                sq.color = T.text
+                sq.alpha = 255
+                sq.draw(dstrect=(px, py, size * k, size * k))
+            yy += logo_h
+        g.label_centered(title, cx, yy, 20, bold=True)
+        yy += 50
+        for text, size, color, bold, lh in laid:
+            if text == "__bar__":
+                bw = w - 64
+                g.round_rect(x + 32, yy + 8, bw, 8, T.button, 1.0, 4)
+                p = ins.progress
+                shown = it.setdefault("shown", 0.0)
+                it["shown"] = shown + (p - shown) * (1 - math.exp(-g.dt / 0.4))
+                if it["shown"] > 0.005:
+                    g.round_rect(x + 32, yy + 8, max(8, bw * it["shown"]), 8, T.text, 1.0, 4)
+            elif text:
+                g.label_centered(text, cx, yy, size, bold=bold, color=color)
+            yy += lh
+        if buttons:
+            bw = (w - 64 - 12 * (len(buttons) - 1)) / len(buttons)
+            bx = x + 32
+            by = y + h - 32 - 44
+            for label, action, style in buttons:
+                bg = {"active": T.active_bg, "danger": red + (255,), "disabled": T.button}.get(style, T.button)
+                fg = {"active": T.active_fg, "danger": (255, 255, 255), "disabled": T.text_secondary}.get(style, T.text)
+                g.round_rect(bx, by, bw, 44, bg, 1.0)
+                g.label_centered(label, bx + bw / 2, by + 13, 14, bold=True, color=fg)
+                if action:
+                    self.hit((bx, by, bw, 44), lambda now, a=action: self.install_action(a, now))
+                bx += bw + 12
+
+    def install_action(self, action, now):
+        it = self.inst
+        if action == "close":
+            self.inst = None
+        elif action == "confirm":
+            it["stage"], it["at"] = "confirm", now
+        elif action == "go":
+            it["stage"], it["at"] = "run", now
+            self.close_all_videos()
+            it["ins"].start(it["disk"][0])
+        elif action == "reboot":
+            self.inst = None
+            self.power_action("reboot", now)
+
     # ------------------------------------------------------------------ arranque
 
-    LOGO_SQ, LOGO_STEP = 38.5, 45.5      # cuadro y distancia entre cuadros (ventana de 84×84)
-    LOGO_PERIOD, LOGO_DELAY = 3.2, 0.8
+    LOGO_SQ, LOGO_STEP = SPL.SQ, SPL.STEP
 
     def logo_origin(self):
         """Esquina de la ventana del logo: el mismo lugar que en el arranque de Linux."""
-        return self.vw / 2 - 42, self.vh / 2 - 70
-
-    @staticmethod
-    def _smooth(u):
-        return u * u * (3 - 2 * u)
+        return SPL.logo_origin(self.vw, self.vh)
 
     def logo_scale(self, k, t):
-        """Cada cuadro crece suave mientras el anterior se encoge (como el hover)."""
-        local = ((t - k * self.LOGO_DELAY) % self.LOGO_PERIOD) / self.LOGO_PERIOD
-        if local < 0.25:
-            return 0.9 + 0.1 * self._smooth(local / 0.25)
-        if local < 0.5:
-            return 1.0 - 0.1 * self._smooth((local - 0.25) / 0.25)
-        return 0.9
+        return SPL.logo_scale(k, t)
+
+    def draw_shutting(self, now):
+        sh = self.shutting
+        self.ren.draw_color = (0, 0, 0, 255)
+        self.ren.clear()
+        a = min(1.0, (now - sh["at"]) / 0.4)
+        sq = self.gfx.shape(round(self.LOGO_SQ * 2), round(self.LOGO_SQ * 2), 14)
+        for x, y, size in SPL.square_rects(self.vw, self.vh, now - sh["at"]):
+            sq.color = (255, 255, 255)
+            sq.alpha = int(255 * a)
+            sq.draw(dstrect=(x, y, size, size))
+        if not sh["sent"] and now - sh["at"] > 0.5:
+            sh["sent"] = True
+            WIFI.power(sh["action"])
 
     def draw_intro(self, now):
         """Logo de Vitrina: los 4 cuadros "respiran" mientras carga; al estar
@@ -1673,8 +1862,12 @@ class App:
         it, g = self.intro, self.gfx
         t = now - it["start"]
         if it["phase"] == "load":
-            ready = not self.items or self.items[self.hero].ready
-            if (t > 1.6 and ready) or t > 8:
+            # Al menos dos vueltas completas (aunque ya haya cargado), y la entrada
+            # empieza justo al terminar una vuelta, para que no se corte a la mitad.
+            ready = not self.items or self.items[self.hero].ready or t > 10
+            if ready and "end" not in it:
+                it["end"] = max(2, math.ceil(t / SPL.PERIOD)) * SPL.PERIOD
+            if "end" in it and t >= it["end"]:
                 it["phase"], it["at"] = "merge", now
                 it["scales"] = [self.logo_scale(k, t) for k in range(4)]
         sq = g.shape(round(self.LOGO_SQ * 2), round(self.LOGO_SQ * 2), 14)
@@ -1723,11 +1916,14 @@ class App:
         cx, cy = center[0] + S / 2, center[1] + S / 2
         x, y = cx - size / 2, cy - size / 2
         black = (0, 0, 0)
-        # Fuera de la ventanita: negro.
-        g.rect(0, 0, self.vw, max(0, y), black)
-        g.rect(0, y + size, self.vw, max(0, self.vh - y - size), black)
-        g.rect(0, y, max(0, x), size, black)
-        g.rect(x + size, y, max(0, self.vw - x - size), size, black)
+        # Fuera de la ventanita: negro (en píxeles enteros, sin rendijas entre piezas).
+        x0, y0 = math.floor(x), math.floor(y)
+        x1, y1 = math.ceil(x + size), math.ceil(y + size)
+        g.rect(0, 0, self.vw, max(0, y0), black)
+        g.rect(0, y1, self.vw, max(0, self.vh - y1), black)
+        g.rect(0, y0, max(0, x0), y1 - y0, black)
+        g.rect(x1, y0, max(0, self.vw - x1), y1 - y0, black)
+        x, y, size = x0, y0, x1 - x0
         # Dentro: primero blanca (como el logo) y se vuelve transparente.
         wa = max(0.0, 1 - p / 0.35)
         if wa > 0.003:
@@ -1801,6 +1997,12 @@ class App:
     def power_action(self, action, now):
         self.power_dlg = None
         self.power_amt = 0.0
+        if action in ("poweroff", "reboot"):
+            # La app se queda mostrando el logo hasta el final (sin textos de Linux).
+            self.close_all_videos()
+            self.shutting = {"at": now, "action": action, "sent": False}
+            self.show_pointer(False)
+            return
         if action == "suspend":
             for _i, p in list(self.players.values()):
                 try:
@@ -2539,6 +2741,9 @@ class App:
             if WIFI.SYSTEM:
                 r = g.button(tr("Apagar…"), x + 28, ry[0] - 10, h=36, size=13, pad=16)
                 self.hit(r, lambda now: self.open_power(now))
+                if INST.running_live():
+                    r2 = g.button(tr("Instalar en esta Mac…"), r[0] + r[2] + 10, ry[0] - 10, h=36, size=13, pad=16)
+                    self.hit(r2, lambda now: self.open_install(now))
         elif self.settings_tab == "night":
             choice("Modo noche", "Reloj o pantalla apagada a cierta hora", "night",
                    [(NIGHT.NEVER, "Nunca"), (NIGHT.SCHEDULE, "Por horario")])

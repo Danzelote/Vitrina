@@ -170,6 +170,39 @@ EN = {
     "¿Apagar la Vitrina?": "Shut down Vitrina?",
     "En reposo, la pantalla se apaga y gasta casi nada. Despierta al abrir la tapa o con cualquier tecla.":
         "Sleep turns the screen off and uses almost no power. Open the lid or press any key to wake it.",
+    # Instalar
+    "Instalar en esta Mac…": "Install on this Mac…",
+    "Instalar Vitrina en esta Mac": "Install Vitrina on this Mac",
+    "Vitrina quedará en el disco de la Mac y arrancará sola, sin la USB. Las fotos, el WiFi y los ajustes de ahora se pasan a la instalación.":
+        "Vitrina will live on the Mac's disk and start by itself, without the USB. Your current photos, Wi-Fi and settings move over.",
+    "Buscando el disco…": "Looking for the disk…",
+    "No se encontró un disco interno donde instalar.": "No internal disk was found to install on.",
+    "Disco: {m} · {s}": "Disk: {m} · {s}",
+    "Se borrará TODO lo que tiene este disco: macOS, programas, documentos y fotos. No se puede deshacer.":
+        "EVERYTHING on this disk will be erased: macOS, apps, documents and photos. This can't be undone.",
+    "Continuar": "Continue",
+    "¿Borrar el disco e instalar?": "Erase the disk and install?",
+    "Último aviso: se borrará {m} ({s}) y no habrá forma de recuperar lo que tiene.":
+        "Last warning: {m} ({s}) will be erased and its contents can't be recovered.",
+    "Deja la Mac conectada a la corriente. Tarda unos minutos.": "Keep the Mac plugged in. It takes a few minutes.",
+    "Borrar e instalar ({n})": "Erase and install ({n})",
+    "Borrar e instalar": "Erase and install",
+    "Instalando Vitrina…": "Installing Vitrina…",
+    "Paso {n} de {t} · {s}": "Step {n} of {t} · {s}",
+    "Empezando": "Starting",
+    "Guardando el firmware de la cámara": "Saving the camera firmware",
+    "Preparando el disco": "Preparing the disk",
+    "Copiando Vitrina": "Copying Vitrina",
+    "Instalando el arranque": "Installing the boot loader",
+    "Pasando tus fotos y ajustes": "Moving your photos and settings",
+    "Terminando": "Finishing",
+    "No apagues la Mac ni quites la USB.": "Don't turn off the Mac or remove the USB.",
+    "Vitrina quedó instalada. Quita la USB y reinicia: arrancará sola desde el disco.":
+        "Vitrina is installed. Remove the USB and restart: it will start from the disk by itself.",
+    "No se pudo instalar": "Couldn't install",
+    "Puedes intentarlo otra vez. Los detalles están en el Diagnóstico del celular.":
+        "You can try again. Details are in Diagnostics on your phone.",
+    "Cerrar": "Close",
     # Biblioteca vacía
     "No hay fotos todavía": "No photos yet",
     "Escanea el código con el celular para agregar fotos": "Scan the code with your phone to add photos",

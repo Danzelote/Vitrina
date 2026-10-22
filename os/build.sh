@@ -50,6 +50,8 @@ PKGS=(
     isight-firmware-tools util-linux
     # Brillo automático con la cámara (exposición fija) y lectura del código QR del WiFi
     v4l-utils libzbar0t64
+    # Instalar en el disco de la Mac
+    rsync gdisk dosfstools e2fsprogs efibootmgr parted
     # La app
     python3 python3-venv libmpv2 ffmpeg
 )
@@ -92,7 +94,7 @@ in_root depmod -a "$KVER"
 log "Configuración de Vitrina"
 cp -a "$HERE/rootfs/." "$ROOT/"
 chmod 440 "$ROOT/etc/sudoers.d/vitrina"
-chmod 755 "$ROOT/usr/lib/systemd/system-sleep/vitrina-wifi" "$ROOT/opt/vitrina/isight.sh"
+chmod 755 "$ROOT/usr/lib/systemd/system-sleep/vitrina-wifi" "$ROOT/opt/vitrina/isight.sh" "$ROOT/opt/vitrina/install.sh"
 echo vitrina > "$ROOT/etc/hostname"
 printf '127.0.0.1\tlocalhost\n127.0.1.1\tvitrina\n' > "$ROOT/etc/hosts"
 ln -sf /usr/share/zoneinfo/America/Mexico_City "$ROOT/etc/localtime"
@@ -114,7 +116,7 @@ for unit in apt-daily.timer apt-daily-upgrade.timer man-db.timer e2scrub_all.tim
     in_root systemctl mask "$unit" >/dev/null 2>&1 || true
 done
 in_root systemctl enable NetworkManager systemd-timesyncd vitrina-isight >/dev/null 2>&1 || true
-in_root systemctl enable vitrina.service
+in_root systemctl enable vitrina.service vitrina-autoinstall.service
 in_root systemctl mask getty@tty1.service
 # Logo de arranque (queda dentro del initramfs al regenerarlo abajo)
 in_root plymouth-set-default-theme vitrina
@@ -158,6 +160,13 @@ grub-mkstandalone --format=x86_64-efi --output="$ISO/EFI/BOOT/BOOTX64.EFI" \
     --locales="" --fonts="" "boot/grub/grub.cfg=$HERE/boot/grub.cfg"
 grub-mkstandalone --format=i386-efi --output="$ISO/EFI/BOOT/BOOTIA32.EFI" \
     --locales="" --fonts="" "boot/grub/grub.cfg=$HERE/boot/grub.cfg"
+# Arranque para cuando Vitrina queda instalada en el disco (lo copia install.sh):
+# busca el disco instalado y lee su configuración.
+mkdir -p "$ISO/instalar"
+for fmt in x86_64-efi:BOOTX64 i386-efi:BOOTIA32; do
+    grub-mkstandalone --format="${fmt%%:*}" --output="$ISO/instalar/${fmt##*:}.EFI" \
+        --locales="" --fonts="" "boot/grub/grub.cfg=$HERE/boot/grub-instalada.cfg"
+done
 EFIIMG="$ISO/boot/grub/efi.img"
 dd if=/dev/zero of="$EFIIMG" bs=1M count=24 status=none
 mkfs.vfat -n VITRINA_EFI "$EFIIMG" >/dev/null

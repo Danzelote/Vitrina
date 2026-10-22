@@ -229,6 +229,9 @@ def diagnostics():
         "grupos": sorted(os.getgroups()),
         "isight": read("/run/vitrina-isight.log"),
         "isight_firmware": os.path.exists("/lib/firmware/isight.fw"),
+        "instalada": read("/etc/vitrina-instalada"),
+        "desde_usb": os.path.isdir("/run/live/medium/live"),
+        "instalacion": (read("/run/vitrina-install.log") or "")[-3000:] or None,
     }
 
 

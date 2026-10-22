@@ -227,10 +227,10 @@ h1 { font-size: 32px; font-weight: 600; letter-spacing: -0.02em; margin: 18px 4p
 /* Sin emparejar */
 .welcome { text-align: center; padding: 18vh 24px 0; }
 .welcome .logo {
-  width: 84px; height: 84px; border-radius: 22px; margin: 0 auto 22px; background: var(--card); box-shadow: var(--shadow);
+  width: 84px; height: 84px; border-radius: 20px; margin: 0 auto 22px; background: #000; color: #fff; box-shadow: var(--shadow);
   display: flex; align-items: center; justify-content: center;
 }
-.welcome .logo svg { width: 46px; height: 46px; fill: none; stroke: var(--text); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.welcome .logo svg { width: 44px; height: 44px; }
 .welcome h1 { margin: 0 0 10px; }
 .welcome p { color: var(--text2); margin: 0 auto 8px; max-width: 320px; }
 

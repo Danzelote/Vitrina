@@ -9,8 +9,8 @@ name = Image("name.png");
 
 S = 38.5;   // tamaño de cada cuadro
 D = 45.5;   // distancia entre cuadros (ventana de 84 x 84)
-PERIOD = 3.2;
-DELAY = 0.8;
+PERIOD = 2.4;
+DELAY = 0.6;
 
 cx = Window.GetX() + Window.GetWidth() / 2;
 cy = Window.GetY() + Window.GetHeight() / 2;

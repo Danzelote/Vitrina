@@ -1,0 +1,16 @@
+# Solo para la prueba automática: con "vitrina.autoinstall" en la línea de
+# arranque, instala sola en el primer disco interno y se apaga.
+[Unit]
+Description=Instalación automática de Vitrina (prueba)
+ConditionKernelCommandLine=vitrina.autoinstall
+After=local-fs.target systemd-udev-settle.service
+Wants=systemd-udev-settle.service
+
+[Service]
+Type=oneshot
+StandardOutput=journal+console
+StandardError=journal+console
+ExecStart=/bin/sh -c 'd=$(/opt/vitrina/install.sh detect | head -1 | cut -d" " -f2); echo "Instalando en $d"; VITRINA_INHIBIT=1 /opt/vitrina/install.sh run "$d" "console=ttyS0,115200 systemd.journald.forward_to_console=1 plymouth.ignore-serial-consoles" && echo "INSTALACION OK"; cat /run/vitrina-install.log | tail -n 30; systemctl poweroff'
+
+[Install]
+WantedBy=multi-user.target

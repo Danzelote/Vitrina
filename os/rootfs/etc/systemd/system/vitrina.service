@@ -2,7 +2,11 @@
 # ningún texto ("vitrina login…") entre el logo de arranque y la app.
 [Unit]
 Description=Vitrina
-After=systemd-user-sessions.service plymouth-quit-wait.service network.target
+# Sin dependencias por defecto: al apagar no se detiene antes de tiempo, así la
+# pantalla sigue mostrando el logo (y no los textos de Linux) hasta el final.
+DefaultDependencies=no
+Requires=sysinit.target
+After=sysinit.target basic.target systemd-user-sessions.service plymouth-quit-wait.service network.target
 Conflicts=getty@tty1.service
 Before=getty.target
 

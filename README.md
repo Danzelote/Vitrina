@@ -3,7 +3,7 @@
 **Convierte una Mac vieja en un portarretratos digital para fotos y videos.**
 *Turn an old Mac into a digital photo and video frame.*
 
-> **Estado:** en desarrollo. La app corre en tu computadora (ver [docs/desarrollo.md](docs/desarrollo.md)) y ya hay una USB para **probar sin instalar** en la Mac (ver [docs/usb.md](docs/usb.md)). La opción de instalar viene después.
+> **Estado:** en desarrollo. La app corre en tu computadora (ver [docs/desarrollo.md](docs/desarrollo.md)) y ya hay una USB para **probar sin instalar** e **instalar** en la Mac (ver [docs/usb.md](docs/usb.md)).
 
 ---
 

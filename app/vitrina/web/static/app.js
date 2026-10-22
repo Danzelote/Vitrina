@@ -102,7 +102,7 @@ function showWelcome(expired) {
   document.getElementById("tabs").hidden = true;
   $view.innerHTML = `
     <div class="welcome">
-      <div class="logo"><svg viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="13" rx="2"/><path d="M8 21h8M12 17.5V21"/><path d="m3.5 14.5 4.5-4 3.5 3 3-2.5 6 4.5"/></svg></div>
+      <div class="logo"><svg viewBox="0 0 84 84" style="fill:currentColor;stroke:none"><rect x="0" y="0" width="38.5" height="38.5" rx="7"/><rect x="45.5" y="0" width="38.5" height="38.5" rx="7"/><rect x="0" y="45.5" width="38.5" height="38.5" rx="7"/><rect x="45.5" y="45.5" width="38.5" height="38.5" rx="7"/></svg></div>
       <h1>${t("Escanea el código")}</h1>
       <p>${t(expired ? "El código ya venció. Escanea el que aparece ahora en la Vitrina." :
         "Abre Ajustes → Celular en la Vitrina y escanea el código con la cámara de tu celular.")}</p>

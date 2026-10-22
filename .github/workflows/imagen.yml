@@ -55,13 +55,20 @@ jobs:
           v=$(sed -n 's/^__version__ = "\(.*\)"/\1/p' app/vitrina/__init__.py)
           echo "tag=v$v-usb${{ github.run_number }}" >> "$GITHUB_OUTPUT"
       - name: Herramientas
-        run: sudo apt-get update -q && sudo apt-get install -y -q qemu-system-x86 socat
+        run: sudo apt-get update -q && sudo apt-get install -y -q qemu-system-x86 qemu-utils ovmf socat
       - name: Probar en una máquina virtual
         id: prueba
         continue-on-error: true
         shell: bash
         run: |
           bash os/smoke.sh out/vitrina-*.iso 2>&1 | tee out/prueba.txt
+          exit ${PIPESTATUS[0]}
+      - name: Probar el instalador
+        id: instalador
+        continue-on-error: true
+        shell: bash
+        run: |
+          bash os/install-test.sh out/vitrina-*.iso 2>&1 | tee out/prueba-instalador.txt
           exit ${PIPESTATUS[0]}
       - name: Resumen de la prueba
         if: always()
@@ -78,11 +85,13 @@ jobs:
           name: Vitrina ${{ steps.version.outputs.tag }}
           body: |
             Imagen para la USB. Grábala con balenaEtcher y arranca la Mac con la tecla ⌥ Option presionada.
-            Instrucciones: docs/usb.md. Prueba automática en máquina virtual: ${{ steps.prueba.outcome }}.
+            Instrucciones: docs/usb.md. Prueba automática en máquina virtual: ${{ steps.prueba.outcome }}. Prueba del instalador: ${{ steps.instalador.outcome }}.
           files: |
             out/vitrina-*.iso
             out/*.sha256
             out/pantalla.png
             out/arranque-*.png
+            out/instalada.png
+            out/prueba-instalador.txt
             out/serial.log
             out/prueba.txt
