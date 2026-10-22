@@ -34,8 +34,8 @@ except Exception:  # pragma: no cover
 # Parámetros del render por software de libmpv (render.h)
 _SW_SIZE, _SW_FORMAT, _SW_STRIDE, _SW_POINTER = 17, 18, 19, 20
 FADE_IN_FRAME = 0.25   # segundos en que el primer cuadro aparece sobre la portada
-AUDIO_IN = 0.3         # fundido de entrada al empezar (lo hace mpv, justo cuando suena)
-AUDIO_RESUME = 0.25    # al reanudar después de una pausa
+AUDIO_IN = 0.5         # fundido de entrada al empezar (lo hace mpv, justo cuando suena); igual que el de salida
+AUDIO_RESUME = 0.5     # al reanudar después de una pausa
 AUDIO_OUT = 0.8        # fundido de salida al pausar, deslizar o cerrar
 # Las bocinas o audífonos (sobre todo Bluetooth, como los AirPods) pueden ir
 # atrasados respecto a lo que mpv cree que suena. Por eso el video sigue vivo
