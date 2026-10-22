@@ -93,5 +93,7 @@ jobs:
             out/arranque-*.png
             out/instalada.png
             out/prueba-instalador.txt
+            out/instalar.log
+            out/instalada.log
             out/serial.log
             out/prueba.txt

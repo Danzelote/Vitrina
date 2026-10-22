@@ -11,7 +11,9 @@ DISK=$DIR/disco-prueba.qcow2
 LOG1=$DIR/instalar.log
 LOG2=$DIR/instalada.log
 MON=/tmp/vitrina-qemu-inst.sock
-OVMF=$(ls /usr/share/ovmf/OVMF.fd /usr/share/OVMF/OVMF_CODE.fd /usr/share/OVMF/OVMF_CODE_4M.fd 2>/dev/null | head -1)
+CODE=$(ls /usr/share/OVMF/OVMF_CODE_4M.fd /usr/share/OVMF/OVMF_CODE.fd 2>/dev/null | head -1)
+VARS_SRC=$(ls /usr/share/OVMF/OVMF_VARS_4M.fd /usr/share/OVMF/OVMF_VARS.fd 2>/dev/null | head -1)
+VARS=$DIR/ovmf-vars.fd
 rm -f "$DISK" "$LOG1" "$LOG2" "$MON"
 
 ACCEL=""
@@ -26,14 +28,16 @@ timeout 1800 qemu-system-x86_64 $ACCEL -m 2048 -smp 2 -cdrom "$ISO" \
     -kernel "$DIR/vmlinuz" -initrd "$DIR/initrd.img" \
     -append "boot=live vitrina.autoinstall console=ttyS0,115200 systemd.journald.forward_to_console=1" \
     -drive "file=$DISK,if=virtio,format=qcow2" -vga std -display none -serial "file:$LOG1" -nic none -no-reboot
-grep -aE "Instalando en|PASO|AVANCE 100|LISTO|ERROR|INSTALACION OK" "$LOG1" | tail -n 30
+grep -aE "Instalando en|PASO|AVANCE|LISTO|ERROR|INSTALACION OK" "$LOG1" | awk '!/AVANCE/ || ++n % 10 == 1' | tail -n 40
 if ! grep -aq "INSTALACION OK" "$LOG1"; then
     echo "PRUEBA FALLÓ: no se instaló"
     exit 1
 fi
 
-echo "== 2) Arrancar el disco instalado con UEFI ($OVMF)"
-qemu-system-x86_64 $ACCEL -m 2048 -smp 2 -bios "$OVMF" \
+echo "== 2) Arrancar el disco instalado con UEFI ($CODE)"
+cp "$VARS_SRC" "$VARS"
+qemu-system-x86_64 $ACCEL -m 2048 -smp 2 -machine q35 \
+    -drive "if=pflash,format=raw,readonly=on,file=$CODE" -drive "if=pflash,format=raw,file=$VARS" \
     -drive "file=$DISK,if=virtio,format=qcow2" -vga std -display none -serial "file:$LOG2" \
     -monitor "unix:$MON,server,nowait" -nic user,model=e1000 &
 QEMU=$!
