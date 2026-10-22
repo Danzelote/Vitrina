@@ -36,8 +36,14 @@ _SW_SIZE, _SW_FORMAT, _SW_STRIDE, _SW_POINTER = 17, 18, 19, 20
 FADE_IN_FRAME = 0.25   # segundos en que el primer cuadro aparece sobre la portada
 AUDIO_IN = 0.3         # fundido de entrada al empezar (lo hace mpv, justo cuando suena)
 AUDIO_RESUME = 0.25    # al reanudar después de una pausa
-AUDIO_OUT = 0.5        # fundido de salida al pausar, deslizar o cerrar
-AUDIO_TAIL = 0.35      # espera a que suene lo que ya estaba en el búfer antes de pausar o cerrar
+AUDIO_OUT = 0.6        # fundido de salida al pausar, deslizar o cerrar
+AUDIO_TAIL = 0.6       # espera a que suene lo que ya estaba en el búfer antes de pausar o cerrar
+# self.volume es la amplitud (0–100, lineal). mpv aplica su volumen al cubo, así que
+# se le manda la raíz cúbica: así el fundido baja parejo y no se "desploma" al inicio.
+
+
+def _mpv_volume(amplitude):
+    return 100.0 * (max(0.0, amplitude) / 100.0) ** (1 / 3)
 _THREADS = []          # hilos de video vivos (para esperarlos al salir)
 
 
@@ -138,7 +144,7 @@ class Player:
             last_info = 0.0
             applied_volume, applied_pause = -1.0, self.want_pause
             while not self._stop.is_set():
-                vol = round(self.volume, 1)
+                vol = round(_mpv_volume(self.volume), 1)
                 if self.audio and vol != applied_volume:
                     self.mpv.volume = vol
                     applied_volume = vol

@@ -63,3 +63,28 @@ def test_raw_preview(tmp_path):
     assert img.size == (200, 300) and img.info["raw_date"] == "2023:07:15 18:30:00"
     it = library.scan_file(str(tmp_path), str(path))
     assert it is not None and it.date == datetime(2023, 7, 15, 18, 30)
+
+
+def test_duplicates(tmp_path):
+    from io import BytesIO
+    from vitrina import dupes
+    folder = str(tmp_path / "biblio")
+    a = os.path.join(folder, "IMG_1.jpg")
+    make(a, "2024:05:01 10:00:00")
+    lib = livelib.LiveLibrary(folder, library.scan(folder), None)
+    d = dupes.Dupes(lib)
+    # Idéntica (otro nombre)
+    same = str(tmp_path / "copia.jpg")
+    with open(a, "rb") as f, open(same, "wb") as g:
+        g.write(f.read())
+    assert d.find(same) is not None
+    # La misma foto guardada de nuevo (otros bytes, misma fecha de cámara)
+    again = str(tmp_path / "convertida.jpg")
+    img = Image.open(a)
+    exif = img.getexif()
+    img.save(again, "JPEG", quality=60, exif=exif)
+    assert d.find(again) is not None
+    # Otra foto tomada en otro momento: no es repetida
+    other = str(tmp_path / "otra.jpg")
+    make(other, "2024:05:01 10:00:01")
+    assert d.find(other) is None

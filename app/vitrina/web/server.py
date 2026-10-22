@@ -27,6 +27,7 @@ from .. import __version__
 from .. import config as C
 from .. import library
 from .. import livelib
+from ..dupes import Dupes
 from ..places import place_of
 from ..settings import config_dir
 
@@ -136,6 +137,8 @@ class WebServer:
     def __init__(self, app, lib):
         self.app, self.lib = app, lib
         self.devices = Devices()
+        self.dupes = Dupes(lib)
+        self.upload_lock = threading.Lock()   # revisar repetidas y agregar, de una en una
         self.code, self.code_until = None, 0.0
         self.httpd = None
         for port in PORTS:
@@ -370,15 +373,24 @@ class Handler(BaseHTTPRequestHandler):
                     left -= len(chunk)
             if modified:
                 os.utime(tmp, (modified, modified))
-            dest = livelib.unique_path(os.path.join(target, name))
-            os.replace(tmp, dest)
         except Exception:
             try:
                 os.remove(tmp)
             except OSError:
                 pass
             return self.send(500, {"status": "error"})
-        tell_app(self.v.app, "added", [dest])
+        # Si dos celulares suben la misma foto a la vez, la segunda ya ve a la primera.
+        with self.v.upload_lock:
+            try:
+                twin = self.v.dupes.find(tmp)
+            except Exception:
+                twin = None
+            if twin is not None:
+                os.remove(tmp)
+                return self.send(200, {"status": "duplicate"})
+            dest = livelib.unique_path(os.path.join(target, name))
+            os.replace(tmp, dest)
+            tell_app(self.v.app, "added", [dest])
         self.send(200, {"status": "added"})
 
     def discard(self, size):

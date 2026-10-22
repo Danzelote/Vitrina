@@ -127,6 +127,10 @@ Las fotos **viven en la propia Mac**. No dependen de Google Drive ni de iCloud.
 - **La fecha** suele llegar bien al subir directo desde la galería (mucho mejor que por WhatsApp). Si falta, se usa la fecha del archivo.
 - **La ubicación** llega si el celular la incluye (en el iPhone, al elegir las fotos aparece "Ubicación incluida"; algunos navegadores la quitan, ver [WebKit bug 207088](https://bugs.webkit.org/show_bug.cgi?id=207088)). Con ubicación, la Vitrina muestra el lugar ("Oaxaca de Juárez, México") sin internet: busca la ciudad más cercana en una lista de GeoNames incluida con la app. Sin ubicación, las **colecciones hacen de "lugar"**.
 
+### Fotos repetidas
+
+Si dos personas suben la misma foto (por ejemplo, con una biblioteca compartida de iCloud), la segunda no se guarda: cuenta como repetida si es idéntica byte por byte, o si se tomó en el mismo instante (fecha de la cámara, con fracciones de segundo) y se ve igual (huella visual). Así se atrapa la misma foto convertida a JPEG en dos iPhones distintos sin confundir las fotos de una ráfaga. En videos: misma fecha y misma duración.
+
 ### Fotos RAW de cámara
 
 Los RAW (Canon .CR2/.CR3, Nikon .NEF, Sony .ARW, .DNG…) se aceptan usando la vista previa JPEG de tamaño completo que cada cámara guarda dentro del archivo: es instantánea y no necesita librerías pesadas para revelar.
