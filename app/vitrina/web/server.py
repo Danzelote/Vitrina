@@ -264,6 +264,15 @@ class Handler(BaseHTTPRequestHandler):
                                    "version": __version__})
         if path == "/api/info":
             return self.info()
+        if path == "/api/diag":
+            if not self.need_device():
+                return
+            from ..night import diagnostics
+            from .. import config as C2
+            d = diagnostics()
+            d.update(version=__version__, ligero=C2.LIGHT, sensor_en_uso=type(self.v.app.sensor).__name__,
+                     sensor_disponible=self.v.app.sensor.available)
+            return self.send(200, json.dumps(d, ensure_ascii=False, indent=2), "application/json; charset=utf-8")
         if path == "/api/photos":
             return self.photos()
         if path.startswith("/t/") or path.startswith("/s/"):

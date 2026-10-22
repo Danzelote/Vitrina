@@ -96,13 +96,29 @@ class CameraLight:
 
     def __init__(self):
         import shutil
-        self.device = "/dev/video0" if os.path.exists("/dev/video0") else None
         self.ffmpeg = shutil.which("ffmpeg")
+        self.device = self.find()
         self.kind = "camera"
         self.dark = False
         self._last = -1e9
         self._busy = False
         self._streak = 0
+        self.level = None         # última medición (0–255), para mostrarla en Ajustes
+
+    @staticmethod
+    def find():
+        """La primera cámara que sirve para capturar (/dev/videoN)."""
+        for dev in sorted(glob.glob("/dev/video*")):
+            n = dev[len("/dev/video"):]
+            index = os.path.join("/sys/class/video4linux", f"video{n}", "index")
+            try:
+                with open(index) as f:
+                    if f.read().strip() != "0":      # los demás nodos son de metadatos
+                        continue
+            except OSError:
+                pass
+            return dev
+        return None
 
     @property
     def available(self):
@@ -119,6 +135,7 @@ class CameraLight:
             if out:
                 frame = out[-160 * 120:]
                 level = sum(frame) / len(frame)
+                self.level = round(level)
                 looks_dark = level < self.DARK if not self.dark else level < self.LIGHT
                 if looks_dark != self.dark:
                     self._streak += 1
@@ -131,8 +148,9 @@ class CameraLight:
         finally:
             self._busy = False
 
-    def update(self, now):
-        if self.available and not self._busy and now - self._last >= self.EVERY:
+    def update(self, now, fast=False):
+        """fast: con Ajustes abierto mide cada 3 s, para ver la lectura en vivo."""
+        if self.available and not self._busy and now - self._last >= (3 if fast else self.EVERY):
             self._last, self._busy = now, True
             threading.Thread(target=self._measure, daemon=True).start()
         return self.dark
@@ -145,6 +163,37 @@ def light_sensor():
         return s
     cam = CameraLight()
     return cam if cam.available else s
+
+
+def diagnostics():
+    """Lo que la Vitrina encuentra en esta Mac (para revisar sensores y cámara)."""
+    import platform
+
+    def read(path):
+        try:
+            with open(path) as f:
+                return f.read().strip()
+        except OSError:
+            return None
+    usb = []
+    for d in sorted(glob.glob("/sys/bus/usb/devices/*")):
+        prod = read(os.path.join(d, "product"))
+        vid, pid = read(os.path.join(d, "idVendor")), read(os.path.join(d, "idProduct"))
+        if vid:
+            usb.append(f"{vid}:{pid} {prod or ''}".strip())
+    return {
+        "modelo": read("/sys/class/dmi/id/product_name"),
+        "kernel": platform.release(),
+        "camaras": {dev: read(f"/sys/class/video4linux/{os.path.basename(dev)}/name")
+                    for dev in sorted(glob.glob("/dev/video*"))},
+        "uvcvideo_cargado": os.path.exists("/sys/module/uvcvideo"),
+        "applesmc": glob.glob("/sys/devices/platform/applesmc.*/*")[:40],
+        "sensor_luz": glob.glob("/sys/devices/platform/applesmc.*/light")
+        + glob.glob("/sys/bus/iio/devices/iio:device*/in_illuminance*"),
+        "brillo": {d: os.access(os.path.join(d, "brightness"), os.W_OK) for d in glob.glob("/sys/class/backlight/*")},
+        "usb": usb,
+        "grupos": sorted(os.getgroups()),
+    }
 
 
 class Backlight:

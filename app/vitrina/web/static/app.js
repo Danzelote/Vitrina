@@ -37,7 +37,7 @@ const EN = {
   "Contenido": "Content", "Versión": "Version",
   "Desconectar este celular": "Disconnect this phone", "¿Desconectar este celular?": "Disconnect this phone?",
   "Para volver a usarlo tendrás que escanear el código otra vez.": "To use it again you'll need to scan the code again.",
-  "Desconectar": "Disconnect", "Cerrar": "Close", "Sin conexión con la Vitrina": "Can't reach the Vitrina",
+  "Desconectar": "Disconnect", "Cerrar": "Close", "Diagnóstico": "Diagnostics", "Sin conexión con la Vitrina": "Can't reach the Vitrina",
   "Guardado": "Saved", "Movidas": "Moved", "Borradas": "Deleted", "Ya existe una colección con ese nombre": "A collection with that name already exists",
 };
 let LANG = "es";
@@ -440,7 +440,8 @@ function renderSettings() {
       <div class="row"><span class="grow title">${t("Versión")}</span><span class="value">${esc(i.version)}</span></div>
     </div>
     <div class="card" style="margin-top:24px"><button class="row danger" id="unpair">${t("Desconectar este celular")}</button></div>
-    <p class="sub" style="text-align:center;margin-top:18px">github.com/Danzelote/Vitrina · ko-fi.com/danzelot</p>`;
+    <p class="sub" style="text-align:center;margin-top:18px">github.com/Danzelote/Vitrina · ko-fi.com/danzelot<br>
+      <a href="/api/diag" target="_blank" style="color:var(--text2)">${t("Diagnóstico")}</a></p>`;
   $view.querySelectorAll(".seg").forEach((seg) => seg.querySelectorAll("button").forEach((b) => {
     b.onclick = () => {
       const raw = b.dataset.v, k = seg.dataset.k;

@@ -51,6 +51,7 @@ SETTINGS_IN = 0.38     # Ajustes aparece...
 SETTINGS_OUT = 0.24    # ...y se va un poco más rápido
 THEME_TIME = 0.7       # cambio gradual entre tema claro y oscuro
 BAR_H = 72
+HUD_IN, HUD_HOLD, HUD_OUT = 0.15, 1.4, 0.35   # píldora de volumen y brillo
 # Teclas de volumen y brillo (códigos de SDL; pygame no les pone nombre).
 MEDIA_KEYS = {0x40000080: "vol_up", 0x40000081: "vol_down", 0x4000007F: "mute", 0x40000106: "mute",
               0x40000114: "bright_up", 0x40000113: "bright_down"}
@@ -144,7 +145,8 @@ class App:
         self.slide_history = []     # fotos ya mostradas (flecha izquierda en la presentación)
         self.mouse_at = now         # último movimiento real del mouse
         self.keys_drove = False     # en el visor se avanzó con flechas o deslizando: sin puntero
-        self.chrome_amt = 1.0       # controles del visor (se ocultan mientras se ve un video)
+        self.chrome_amt = 1.0       # controles del visor (se ocultan al no mover el mouse)
+        self.zoom_amt = 0.0         # sin controles, la foto crece un poco (0–1)
         self.pointer_shown = None
         self.lib_version = lib.version if lib else 0
         self.new_keys = []          # fotos recién llegadas: se muestran primero
@@ -501,7 +503,16 @@ class App:
         s = self.view_scale()
         bw, bh = self.big_dims(self.items[i], VIEWER)
         w, h = bw * s, bh * s
+        z = self.immersive_zoom(w, h)
+        w, h = w * z, h * z
         return (self.vw - w) / 2, (self.vh - h) / 2, w, h
+
+    def immersive_zoom(self, w, h):
+        """Sin controles en pantalla, la foto o el video crece un poco (sin tocar las orillas)."""
+        if self.zoom_amt <= 0.001:
+            return 1.0
+        z_max = min(1.12, (self.vw - 48) / max(w, 1), (self.vh - 28) / max(h, 1))
+        return 1.0 + max(0.0, z_max - 1.0) * EASE_IN_OUT(min(1.0, self.zoom_amt))
 
     def close_viewer(self, now):
         if self.swipe:
@@ -1217,7 +1228,7 @@ class App:
             self.go_frame(target, now)
 
     def media_key(self, action, now):
-        """Teclas de volumen y brillo, con su aviso al centro como en la Mac."""
+        """Teclas de volumen y brillo, con su píldora arriba a la derecha (como en macOS)."""
         if action.startswith("vol") or action == "mute":
             v = self.volume
             if not v.available:
@@ -1226,59 +1237,72 @@ class App:
                 v.toggle_mute()
             else:
                 v.change(v.STEP if action == "vol_up" else -v.STEP)
-            self.hud = ("volume", v.level / 100, v.muted, now)
+            self.show_hud("volume", v.level / 100, v.muted, now)
         else:
             b = self.backlight
             if not b.available:
                 return
             b.change_user(0.0625 if action == "bright_up" else -0.0625)
-            self.hud = ("brightness", b.user, False, now)
+            self.show_hud("brightness", b.user, False, now)
+
+    def show_hud(self, kind, level, muted, now):
+        h = self.hud
+        if h and h["kind"] == kind and now - h["last"] < HUD_HOLD + HUD_OUT:
+            # Ya se ve: solo se mueve la barra (no vuelve a aparecer).
+            if now - h["last"] > HUD_HOLD:      # ya se estaba yendo: vuelve completa, sin animar
+                h["start"] = now - HUD_IN
+            h.update(level=level, muted=muted, last=now)
+        else:
+            self.hud = {"kind": kind, "level": level, "muted": muted, "start": now, "last": now,
+                        "shown": 0.0 if muted else level}
 
     def draw_hud(self, now):
-        if not self.hud:
+        h = self.hud
+        if not h:
             return
-        kind, level, muted, t0 = self.hud
-        age = now - t0
-        if age > 1.8:
+        if now - h["last"] > HUD_HOLD + HUD_OUT:
             self.hud = None
             return
-        a = min(1.0, age / 0.12, (1.8 - age) / 0.4)
+        a = min(1.0, (now - h["start"]) / HUD_IN, (HUD_HOLD + HUD_OUT - (now - h["last"])) / HUD_OUT)
+        a = max(0.0, a)
+        target = 0.0 if h["muted"] else h["level"]
+        h["shown"] += (target - h["shown"]) * (1 - math.exp(-self.gfx.dt / 0.07))
         g = self.gfx
-        size = 168
-        x, y = self.vw / 2 - size / 2, self.vh * 0.64 - size / 2
-        g.round_rect(x, y, size, size, (28, 28, 30, 215), a, 28)
-        if kind == "volume":
-            name = "speaker_mute" if muted or level <= 0 else "speaker"
+        w, hh = 250, 46
+        x = self.vw - 16 - w
+        y = (BAR_H + 10 if self.mode == GRID else 16) - (1 - EASE(a)) * 8
+        g.round_rect(x, y, w, hh, (28, 28, 30, 225), a)
+        if h["kind"] == "volume":
+            name = "speaker_mute" if h["muted"] or h["level"] <= 0 else "speaker"
         else:
             name = "sun"
-        g.draw_icon(name, x + size / 2 - 36, y + 30, 72, (255, 255, 255), a)
-        n = 16
-        filled = 0 if muted else round(level * n)
-        bw, gap = 6, 1.5
-        total = n * bw + (n - 1) * gap
-        bx, by = x + (size - total) / 2, y + size - 34
-        for k in range(n):
-            g.rect(bx + k * (bw + gap), by, bw, 7, (255, 255, 255), a * (1.0 if k < filled else 0.22))
+        g.draw_icon(name, x + 14, y + (hh - 22) / 2, 22, (255, 255, 255), a)
+        bx, bw = x + 50, w - 50 - 18
+        by = y + hh / 2 - 3
+        g.round_rect(bx, by, bw, 6, (255, 255, 255, 60), a, 3)
+        if h["shown"] > 0.005:
+            g.round_rect(bx, by, max(6, bw * min(1.0, h["shown"])), 6, (255, 255, 255, 255), a, 3)
 
     def update_viewer_idle(self, dt, now):
-        """En el visor: el puntero se esconde al avanzar con flechas o deslizando,
-        y mientras se ve un video sin mover el mouse se esconden también los
-        controles. Moviendo el mouse vuelven."""
+        """En el visor la pantalla se queda limpia: al avanzar con flechas o
+        deslizando, o tras unos segundos sin mover el mouse, se esconden el
+        puntero y los controles (fecha, volver, flechas, barra del video) y la
+        foto crece un poco. Moviendo el mouse todo vuelve."""
         if self.mode != VIEWER:
-            self.chrome_amt = 1.0
+            self.chrome_amt, self.zoom_amt = 1.0, 0.0
             if self.mode == GRID:
                 self.show_pointer(True)
             return
         vp = self.player_for("view", self.morph_i)
-        idle = now - self.mouse_at > 2.5
-        playing = bool(vp and vp.is_playing)
-        show_chrome = not (playing and idle)
-        target = 1.0 if show_chrome else 0.0
-        self.chrome_amt += (target - self.chrome_amt) * (1 - math.exp(-dt / (0.12 if show_chrome else 0.3)))
-        want_pointer = not self.keys_drove and not (playing and idle) and not self.settings_open
-        if self.settings_open:
-            want_pointer = True
-        self.show_pointer(want_pointer)
+        paused_video = bool(vp and not vp.is_playing)
+        idle = now - self.mouse_at > (2.5 if not paused_video else 1e9)
+        clean = (self.keys_drove or idle) and not self.settings_open and self.m >= 0.999
+        target = 0.0 if clean else 1.0
+        self.chrome_amt += (target - self.chrome_amt) * (1 - math.exp(-dt / (0.10 if not clean else 0.22)))
+        # El acercamiento va un poco detrás de los controles: primero se van, luego crece.
+        ztarget = 1.0 if clean and self.chrome_amt < 0.5 else 0.0
+        self.zoom_amt += (ztarget - self.zoom_amt) * (1 - math.exp(-dt / 0.22))
+        self.show_pointer(not clean)
 
     def update_drift(self, dt, now):
         if now >= self.drift_at:
@@ -1290,6 +1314,9 @@ class App:
 
     def update_night(self, dt, now):
         st = self.settings
+        if not self.sensor.available and now - getattr(self, "_sensor_check", -1e9) > 10:
+            self._sensor_check = now       # la cámara puede aparecer después de arrancar
+            self.sensor = NIGHT.light_sensor()
         if self.night_force:
             self.forced_recent = True
         self.dark = self.night_force or (st.night == NIGHT.SCHEDULE and NIGHT.in_schedule(st.night_hours)) \
@@ -1557,6 +1584,11 @@ class App:
         big_r = 0.0 if self.big_kind == FRAME else C.RADIUS_VIEW
         radius = lerp(C.RADIUS_GRID, big_r, self.m) * s
         rect, snap = (x, y, w * s, h * s), True
+        if self.big_kind == VIEWER and self.mode == VIEWER and self.zoom_amt > 0.001:
+            rx, ry, rw, rh = rect
+            z = self.immersive_zoom(rw, rh)
+            rect = (rx + rw / 2 - rw * z / 2, ry + rh / 2 - rh * z / 2, rw * z, rh * z)
+            snap = False
         if self.big_kind == FRAME and self.kb_active(self.morph_i):
             rect = self.kb_rect(self.morph_i, rect, self._now, amount=self.m)
             snap = self.m < 0.999       # quieto en pantalla: posiciones finas, sin saltitos
@@ -1669,11 +1701,8 @@ class App:
             self.draw_grid_chrome(now, 1.0 - self.m)
         if self.mode == VIEWER and self.m > 0.01:
             self.draw_viewer_chrome(now)
-        p = self.processor
-        if p and p.busy and not in_frame:
-            label = tr("Preparando fotos {done}/{total}", done=p.done, total=p.total)
-            w = g.tsize(g.text(label, 13, C.TEXT, True))[0] + 36
-            g.pill(label, self.vw - 24 - w, self.vh - 128, 13, 1.0, anchor="left")
+        if self.mode == GRID:
+            self.draw_background_work(now, 1.0 - self.m)
 
     def draw_toast(self, now):
         if not self.toast:
@@ -1688,6 +1717,36 @@ class App:
             g = self.gfx
             w = g.tsize(g.text(text, 14, T.text, True))[0] + 36
             g.pill(text, self.vw / 2, 24 + (1 - EASE(min(1.0, age / 0.35))) * -12, 14, a)
+
+    def draw_background_work(self, now, a):
+        """Lo que se está haciendo en segundo plano, abajo al centro de la cuadrícula:
+        "Preparando fotos 35 de 40 · Preparando videos 1 de 3". Mientras se
+        preparan videos, la Mac vieja va más lenta: así se sabe por qué."""
+        p = self.processor
+        if not p or a <= 0.01:
+            return
+        parts = []
+        if p.busy:
+            parts.append(tr("Preparando fotos {done} de {total}", done=min(p.done + 1, p.total), total=p.total))
+        if p.videos_done < p.videos_total:
+            parts.append(tr("Preparando videos {done} de {total}", done=min(p.videos_done + 1, p.videos_total),
+                            total=p.videos_total))
+        if not parts:
+            return
+        g = self.gfx
+        label = "  ·  ".join(parts)
+        w = g.tsize(g.text(label, 13, T.text, True))[0] + 36 + 26
+        x, y, h = self.vw / 2 - w / 2, self.vh - 64, 40
+        g.round_rect(x, y, w, h, T.pill, a)
+        # Un circulito que gira, para que se note que está trabajando.
+        cx, cy = x + 24, y + h / 2
+        for k in range(8):
+            ang = now * 6 + k * math.pi / 4
+            g.rect(cx + 6 * math.cos(ang) - 1.25, cy + 6 * math.sin(ang) - 1.25, 2.5, 2.5, T.text, a * (0.2 + 0.8 * k / 7))
+        t = g.text(label, 13, T.text, True)
+        tw, th = g.tsize(t)
+        t.alpha = int(255 * a)
+        t.draw(dstrect=(x + 40, y + (h - th) / 2, tw, th))
 
     def clock_text(self):
         t = time.localtime()
@@ -1992,6 +2051,11 @@ class App:
                    [("light", "Claro"), ("dark", "Oscuro"), ("auto", "Automático")], on_change=self.apply_theme)
             if self.sensor.available and getattr(self.sensor, "kind", "") == "camera":
                 light_sub = "Con la cámara: el foquito verde parpadea"
+                if st.night == NIGHT.LIGHT:
+                    self.sensor.update(now, fast=True)        # lectura en vivo mientras se ve Ajustes
+                    if self.sensor.level is not None:
+                        state = tr("oscuro") if self.sensor.dark else tr("claro")
+                        light_sub = tr("Cámara: luz {n} de 255 · {s}", n=self.sensor.level, s=state)
             elif self.sensor.available:
                 light_sub = "Con el sensor de luz de la Mac"
             else:
