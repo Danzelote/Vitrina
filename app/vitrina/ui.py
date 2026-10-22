@@ -9,6 +9,7 @@ import math
 import os
 import random
 import time
+from datetime import date
 
 os.environ.setdefault("SDL_RENDER_SCALE_QUALITY", "1")  # escalado suave (lineal)
 
@@ -17,6 +18,9 @@ from pygame._sdl2.video import Renderer, Window  # noqa: E402
 
 from . import __version__  # noqa: E402
 from . import camera as cam  # noqa: E402
+from . import kenburns as KB  # noqa: E402
+from . import memories as MEM  # noqa: E402
+from . import night as NIGHT  # noqa: E402
 from . import config as C  # noqa: E402
 from . import levels as LV  # noqa: E402
 from . import video as VID  # noqa: E402
@@ -119,6 +123,28 @@ class App:
         self.touch_seen = False
         self.ignore_swipe_until_gap = False
         self.swipe_acc = 0.0
+        self.settings_tab = "show"
+        # Ken Burns: movimiento de cada foto en pantalla (índice -> (inicio, Motion)).
+        self.kb = {}
+        # "Un día como hoy"
+        self.memory_queue = []
+        self.memory_day = None
+        self.seq_pos = None
+        self.slides_since_memory = 0
+        # Reloj e información: se mueven unos píxeles de vez en cuando (pantallas viejas).
+        self.drift = [0.0, 0.0]
+        self.drift_target = (0.0, 0.0)
+        self.drift_at = now + 180
+        # Modo noche
+        self.night = 0.0            # 0 = normal, 1 = apagada (o solo el reloj tenue)
+        self.night_force = False    # tecla n: simula la noche para probar
+        self.forced_recent = False
+        self.dark = False
+        self.woke = False
+        self.last_input = now
+        self.sleeping = False
+        self.sensor = NIGHT.LightSensor()
+        self.backlight = NIGHT.Backlight()
         self.hits = []
         self.ui_rects = []
         self.running = True
@@ -286,6 +312,8 @@ class App:
         self.settings_open = False
         self.hero = self.morph_i = i
         self.big_kind = FRAME
+        self.kb_start(i, now)
+        self.seq_pos = None
         cx, cy = self.plane.cell_center(i)
         self.move_camera(cx, cy, self.frame_scale(), C.MORPH_TIME, now)
         self.morph_to(1.0, C.MORPH_TIME, now)
@@ -512,13 +540,63 @@ class App:
 
     def next_index(self):
         pool = self.slide_pool()
+        if self.settings.memories:
+            self.slides_since_memory += 1
+            if self.slides_since_memory >= MEM.EVERY:
+                mem = self.next_memory(pool)
+                if mem is not None:
+                    self.slides_since_memory = 0
+                    return mem
         if self.settings.shuffle:
             if not self.queue or self.queue[0] not in pool:
                 self.queue = [i for i in pool if i != self.hero]
                 random.shuffle(self.queue)
             return self.queue.pop(0) if self.queue else self.hero
-        later = [i for i in pool if i > self.hero]
-        return later[0] if later else pool[0]
+        # El orden normal sigue su propia cuenta: los recuerdos no lo hacen saltar.
+        base = self.seq_pos if self.seq_pos is not None else self.hero
+        later = [i for i in pool if i > base]
+        self.seq_pos = later[0] if later else pool[0]
+        return self.seq_pos
+
+    def next_memory(self, pool):
+        """Siguiente foto de "Un día como hoy" (las va rotando sin repetir)."""
+        today = date.today()
+        if self.memory_day != today:
+            self.memory_day, self.memory_queue = today, []
+        if not self.memory_queue:
+            found = MEM.on_this_day(self.items, pool, today)
+            self.memory_queue = [i for i in found if i != self.hero]
+            random.shuffle(self.memory_queue)
+        while self.memory_queue:
+            i = self.memory_queue.pop(0)
+            if i in pool and i != self.hero:
+                return i
+        return None
+
+    def memory_label(self, item):
+        if not self.settings.memories:
+            return None
+        today = date.today()
+        if MEM.on_this_day([item], [0], today):
+            return MEM.years_ago(item.date, today)
+        return None
+
+    # -- Ken Burns ----------------------------------------------------------
+
+    def kb_start(self, i, now):
+        style = KB.OFF if self.items[i].is_video else self.settings.kenburns
+        self.kb = {k: v for k, v in self.kb.items() if k == self.hero}
+        self.kb[i] = (now, KB.Motion(style))
+
+    def kb_active(self, i):
+        e = self.kb.get(i)
+        return e is not None and e[1].style != KB.OFF
+
+    def kb_rect(self, i, rect, now, amount=1.0):
+        e = self.kb.get(i)
+        if e is None or e[1].style == KB.OFF:
+            return rect
+        return KB.apply(rect, *e[1].at(now - e[0]), amount)
 
     def finish_fade(self):
         nxt, _ = self.fade
@@ -564,6 +642,7 @@ class App:
             p = self.player_for("next", self._next)
             if p and not p.has_frame and now - self._next_since < 1.5:
                 return  # espera el primer cuadro para que el fundido no muestre negro
+        self.kb_start(self._next, now)
         self.fade = (self._next, Tween((0.0,), (1.0,), C.FADE_TIME, EASE, now))
         self._next = None
 
@@ -584,6 +663,22 @@ class App:
     def handle(self, e, now):
         if self.debug_input:
             self.debug_event(e)
+        if e.type == pygame.KEYDOWN and e.key == pygame.K_n:
+            self.night_force = not self.night_force   # simula la noche (para probar)
+            self.woke = False
+            return
+        if e.type in (pygame.MOUSEMOTION, pygame.MOUSEWHEEL, pygame.MOUSEBUTTONDOWN,
+                      pygame.MOUSEBUTTONUP, pygame.KEYDOWN, pygame.FINGERDOWN):
+            self.last_input = now
+            if self.dark or self.night > 0.001:
+                self.woke = True
+            if self.night > 0.5:
+                # La pantalla está apagada (o casi): el primer toque solo la despierta.
+                if e.type == pygame.MOUSEMOTION:
+                    self.mx, self.my = e.pos
+                self.frame_anchor = None
+                self.frame_since = now
+                return
         if e.type == pygame.QUIT:
             self.running = False
         elif e.type == pygame.KEYDOWN:
@@ -834,9 +929,13 @@ class App:
                 j = self.neighbor(self.morph_i, d)
                 if j is not None:
                     self.gfx.screen(self.items[j])
+        self.update_drift(dt, now)
+        self.update_night(dt, now)
+        idle_limit = C.VIEWER_IDLE if self.mode == VIEWER else self.settings.idle_seconds
         if self.mode == FRAME:
-            self.update_slideshow(now)
-        elif now - self.last_move > self.settings.idle_seconds:
+            if not self.sleeping:
+                self.update_slideshow(now)
+        elif now - self.last_move > idle_limit:
             if self.mode == VIEWER:
                 target = self.morph_i
             elif self.lvl == PHOTOS:
@@ -844,6 +943,51 @@ class App:
             else:
                 target = self.hover_group.members[0] if self.hover_group else self.hero
             self.go_frame(target, now)
+
+    def update_drift(self, dt, now):
+        if now >= self.drift_at:
+            self.drift_at = now + 180
+            self.drift_target = (random.uniform(-6, 6), random.uniform(-6, 6))
+        k = 1 - math.exp(-dt / 3.0)
+        self.drift[0] += (self.drift_target[0] - self.drift[0]) * k
+        self.drift[1] += (self.drift_target[1] - self.drift[1]) * k
+
+    def update_night(self, dt, now):
+        st = self.settings
+        if self.night_force:
+            self.forced_recent = True
+        self.dark = self.night_force or (st.night == NIGHT.SCHEDULE and NIGHT.in_schedule(st.night_hours)) \
+            or (st.night == NIGHT.LIGHT and self.sensor.update(now))
+        if not self.dark:
+            self.woke = False
+            target = 0.0
+            fast = st.night == NIGHT.NEVER or self.forced_recent
+            duration = NIGHT.WAKE_TIME if fast else NIGHT.DIM_TIME   # amanece poco a poco
+        elif self.woke and now - self.last_input < NIGHT.STAY_AWAKE:
+            target, duration = 0.0, NIGHT.WAKE_TIME
+        else:
+            target = 1.0
+            duration = NIGHT.REDIM_TIME if self.woke else NIGHT.DIM_TIME
+            if self.night_force:
+                duration = 8.0                  # la simulación pasa en segundos
+        step = dt / duration
+        if self.night < target:
+            self.night = min(target, self.night + step)
+        elif self.night > target:
+            self.night = max(target, self.night - step)
+        if self.night <= 0.0 and not self.night_force:
+            self.forced_recent = False
+        if self.night > 0.0 or self.backlight._last is not None:
+            low = 0.0 if st.night_style == "off" else 0.08
+            self.backlight.set(max(low, 1.0 - self.night))
+        sleeping = self.night >= 0.999 and st.night_style == "off" and self.mode == FRAME
+        if sleeping != self.sleeping:
+            self.sleeping = sleeping
+            p = self.player_for("frame", self.hero)
+            if p:
+                p.set_paused(sleeping)
+            if not sleeping:
+                self.last_slide = now
 
     # ------------------------------------------------------------------ dibujo
 
@@ -869,6 +1013,10 @@ class App:
     def draw(self, now):
         self._now = now
         g = self.gfx
+        if self.sleeping:          # pantalla apagada: nada que dibujar
+            self.ren.draw_color = (0, 0, 0, 255)
+            self.ren.clear()
+            return
         g.begin_frame()
         self.hits = []
         self.ui_rects = []
@@ -905,6 +1053,7 @@ class App:
         if self.fade:
             self.draw_fade(now)
         self.draw_chrome(now)
+        self.draw_night(now)
 
     def draw_tiles(self, tx, ty, s, alpha, bg):
         g = self.gfx
@@ -939,7 +1088,7 @@ class App:
                 g.round_rect(x + 6, y + 12 * self.hover_amt, w - 12, w, (0, 0, 0, 255), 0.35 * self.hover_amt * a, radius)
             self.draw_tile(self.items[hovered], x, y, w, w, a, radius * k, bg, idx=hovered, badge=True)
 
-    def draw_tile(self, item, x, y, w, h, alpha, radius, bg, prefer_screen=False, idx=None, badge=False):
+    def draw_tile(self, item, x, y, w, h, alpha, radius, bg, prefer_screen=False, idx=None, badge=False, snap=True):
         g = self.gfx
         vtex, va = self.video_layer(idx, self._now) if idx is not None and item.is_video else (None, 0.0)
         tex = vtex if va >= 1.0 else None
@@ -951,9 +1100,9 @@ class App:
             g.rect(x, y, w, h, T.placeholder, alpha)
             g.corners(x, y, w, h, radius, bg, alpha)
             return
-        g.image(tex, x, y, w, h, alpha, radius, bg)
+        g.image(tex, x, y, w, h, alpha, radius, bg, snap)
         if vtex is not None and 0 < va < 1.0:   # el video aparece suave sobre su portada
-            g.image(vtex, x, y, w, h, alpha * va, radius, bg)
+            g.image(vtex, x, y, w, h, alpha * va, radius, bg, snap)
         if badge and item.is_video and w > 90:
             self.draw_video_badge(item, x, y, w, h, alpha, idx)
 
@@ -986,8 +1135,12 @@ class App:
         x, y = tx + s * (pcx - w / 2), ty + s * (pcy - h / 2)
         big_r = 0.0 if self.big_kind == FRAME else C.RADIUS_VIEW
         radius = lerp(C.RADIUS_GRID, big_r, self.m) * s
-        self.draw_tile(item, x, y, w * s, h * s, 1.0, radius, bg, w * s > C.THUMB_SHORT_SIDE * 1.3,
-                       idx=self.morph_i, badge=self.m < 0.3)
+        rect, snap = (x, y, w * s, h * s), True
+        if self.big_kind == FRAME and self.kb_active(self.morph_i):
+            rect = self.kb_rect(self.morph_i, rect, self._now, amount=self.m)
+            snap = self.m < 0.999       # quieto en pantalla: posiciones finas, sin saltitos
+        self.draw_tile(item, *rect, 1.0, radius, bg, rect[2] > C.THUMB_SHORT_SIDE * 1.3,
+                       idx=self.morph_i, badge=self.m < 0.3, snap=snap)
 
     def draw_swipe(self, now, bg):
         """Las fotos van una junto a otra como páginas (como en Fotos del iPhone):
@@ -1055,7 +1208,7 @@ class App:
         vtex, va = self.video_layer(nxt, now)
         tex = (vtex if va >= 1.0 else None) or g.screen(item, force=True)
         if tex:
-            g.image(tex, *self.frame_rect(item), alpha=a)
+            g.image(tex, *self.kb_rect(nxt, self.frame_rect(item), now), alpha=a, snap=not self.kb_active(nxt))
 
     # ------------------------------------------------------------------ controles
 
@@ -1063,13 +1216,26 @@ class App:
         g = self.gfx
         in_frame = self.mode == FRAME
         frame_amt = self.m if self.big_kind == FRAME and in_frame else 0.0
+        frame_amt *= 1.0 - self.night     # de noche se apagan la fecha y el reloj de la esquina
         item = self.items[self.fade[0] if self.fade else self.hero]
         with TH.using(TH.DARK):   # sobre fotos, siempre en oscuro
-            if self.settings.show_info and frame_amt > 0.01:
+            st = self.settings
+            memory = self.memory_label(item)
+            if frame_amt > 0.01 and (st.show_info or st.clock != "off" or memory):
                 g.gradient.alpha = int(150 * frame_amt)
                 g.gradient.draw(dstrect=(0, self.vh - 260, self.vw, 260))
-                g.label(item.collection or "Fotos", 56, self.vh - 104, 26, frame_amt, bold=True)
-                g.label(item.date_text, 56, self.vh - 68, 16, frame_amt)
+            dx, dy = self.drift
+            if frame_amt > 0.01:
+                top = self.vh - 104
+                if st.show_info:
+                    g.label(item.collection or "Fotos", 56 + dx, self.vh - 104 + dy, 26, frame_amt, bold=True)
+                    g.label(item.date_text, 56 + dx, self.vh - 68 + dy, 16, frame_amt)
+                else:
+                    top = self.vh - 68
+                if memory:
+                    self.draw_memory_tag(memory, 56 + dx, top - 38 + dy, frame_amt)
+                if st.clock != "off":
+                    self.draw_clock(self.vw - 56 + dx, self.vh - 50 + dy, frame_amt)
             if in_frame:
                 left = self.hint_until - now
                 a = min(1.0, max(0.0, left / 0.8)) * min(1.0, max(0.0, (now - self.frame_since - 1.0) / 0.6))
@@ -1085,6 +1251,50 @@ class App:
             g.pill(label, self.vw - 24 - w, self.vh - 128, 13, 1.0, anchor="left")
         if self.settings_open:
             self.draw_settings(now)
+
+    def clock_text(self):
+        t = time.localtime()
+        if self.settings.clock == "12":
+            return f"{t.tm_hour % 12 or 12}:{t.tm_min:02d}", ("a. m." if t.tm_hour < 12 else "p. m.")
+        return f"{t.tm_hour}:{t.tm_min:02d}", None
+
+    def draw_clock(self, right, bottom, alpha, size=48):
+        """Hora alineada a la derecha, con su orilla de abajo en `bottom`."""
+        g = self.gfx
+        hhmm, ampm = self.clock_text()
+        tw, th = g.tsize(g.text(hhmm, size, (255, 255, 255)))
+        aw = ah = 0
+        if ampm:
+            aw, ah = g.tsize(g.text(ampm, round(size * 0.36), (255, 255, 255), True))
+            aw += size * 0.16
+        x, y = right - tw - aw, bottom - th
+        g.label_shadow(hhmm, x, y, size, alpha)
+        if ampm:
+            g.label_shadow(ampm, x + tw + size * 0.16, y + th - ah - th * 0.16, round(size * 0.36), alpha * 0.85, bold=True)
+
+    def draw_memory_tag(self, label, x, y, alpha):
+        """Etiqueta pequeña de "Un día como hoy"."""
+        g = self.gfx
+        t = g.text(f"Un día como hoy  ·  {label}", 13, (255, 255, 255), True)
+        tw, th = g.tsize(t)
+        w, h = tw + 28, 28
+        g.round_rect(x, y, w, h, (255, 255, 255, 46), alpha, h / 2)
+        t.alpha = int(255 * alpha)
+        t.draw(dstrect=(x + 14, y + (h - th) / 2, tw, th))
+
+    def draw_night(self, now):
+        if self.night <= 0.001:
+            return
+        g = self.gfx
+        clock_style = self.settings.night_style == "clock"
+        g.rect(0, 0, self.vw, self.vh, (0, 0, 0), min(1.0, self.night * (0.97 if clock_style else 1.0)))
+        if clock_style:
+            dx, dy = self.drift[0] * 3, self.drift[1] * 3
+            hhmm, _ = self.clock_text()
+            t = g.text(hhmm, 132, (255, 255, 255))
+            tw, th = g.tsize(t)
+            t.alpha = int(255 * 0.30 * self.night)
+            t.draw(dstrect=(self.vw / 2 - tw / 2 + dx, self.vh / 2 - th / 2 + dy, tw, th))
 
     def hit(self, rect, fn):
         if rect:
@@ -1219,7 +1429,8 @@ class App:
     def draw_settings(self, now):
         g = self.gfx
         g.rect(0, 0, self.vw, self.vh, (0, 0, 0), 0.45)
-        w, h = 560, 476
+        w, h = 620, 640
+        h = min(h, self.vh - 40)
         x, y = (self.vw - w) / 2, (self.vh - h) / 2
         g.round_rect(x, y, w, h, T.panel, 1.0, 28)
         self.ui_rects.append((x, y, w, h))
@@ -1227,42 +1438,74 @@ class App:
         g.label("Ajustes", x + 28, y + 24, 22, bold=True)
         done = g.button("Listo", x + w - 28 - 76, y + 20, h=36, active=True, size=14, pad=18)
         self.hit(done, lambda now: self.close_settings())
-        st = self.settings
-        rows_y = y + 96
-
-        def row(ry, title, sub):
-            g.rect(x + 28, ry - 16, w - 56, 1, T.hairline, T.hairline_alpha)
-            g.label(title, x + 28, ry, 15, bold=True)
-            g.label(sub, x + 28, ry + 22, 13, color=T.text_secondary)
-
-        row(rows_y, "Apariencia", "Automático: claro de día y oscuro de noche")
-        topts = [("light", "Claro"), ("dark", "Oscuro"), ("auto", "Automático")]
-        tw_ = sum(g.tsize(g.text(lbl, 13, T.text, True))[0] + 28 for _, lbl in topts) + 6
-        tsegs, _ = g.segmented(topts, st.theme, x + w - 28 - tw_, rows_y, h=40)
+        tabs = [("show", "Presentación"), ("screen", "Pantalla")]
+        tw_ = sum(g.tsize(g.text(lbl, 13, T.text, True))[0] + 28 for _, lbl in tabs) + 6
+        tsegs, _ = g.segmented(tabs, self.settings_tab, x + (w - tw_) / 2, y + 74, h=36)
         for val, rect in tsegs:
-            self.hit(rect, lambda now, v=val: self.set_theme(v))
+            self.hit(rect, lambda now, v=val: setattr(self, "settings_tab", v))
+        st = self.settings
+        ry = [y + 146]
+        right = x + w - 28
 
-        rows_y += 76
-        row(rows_y, "Volver a la presentación", "Tras este tiempo sin mover el mouse")
-        opts = [(10, "10 s"), (15, "15 s"), (30, "30 s"), (60, "1 min")]
-        seg_w = sum(g.tsize(g.text(lbl, 13, C.TEXT, True))[0] + 28 for _, lbl in opts) + 6
-        segs, _ = g.segmented(opts, st.idle_seconds, x + w - 28 - seg_w, rows_y, h=40)
-        for val, rect in segs:
-            self.hit(rect, lambda now, v=val: setattr(st, "idle_seconds", v))
+        def row(title, sub):
+            g.rect(x + 28, ry[0] - 14, w - 56, 1, T.hairline, T.hairline_alpha)
+            g.label(title, x + 28, ry[0], 15, bold=True)
+            g.label(sub, x + 28, ry[0] + 22, 13, color=T.text_secondary)
 
-        rows_y += 76
-        row(rows_y, "Mostrar fecha y lugar", "En la esquina, durante la presentación")
-        tr = g.toggle(st.show_info, x + w - 28 - 52, rows_y + 4)
-        self.hit(tr, lambda now: setattr(st, "show_info", not st.show_info))
+        def choice(title, sub, attr, opts, enabled=True, on_change=None):
+            row(title, sub)
+            seg_w = sum(g.tsize(g.text(lbl, 13, T.text, True))[0] + 28 for _, lbl in opts) + 6
+            segs, _ = g.segmented(opts, getattr(st, attr), right - seg_w, ry[0], h=40,
+                                  alpha=1.0 if enabled else 0.35)
+            if enabled:
+                for val, rect in segs:
+                    def pick(now, v=val):
+                        setattr(st, attr, v)
+                        if on_change:
+                            on_change()
+                    self.hit(rect, pick)
+            ry[0] += 70
 
-        rows_y += 76
-        row(rows_y, "Orden aleatorio", "Mezcla las fotos en la presentación")
-        tr2 = g.toggle(st.shuffle, x + w - 28 - 52, rows_y + 4)
+        def switch(title, sub, attr, on_change=None):
+            row(title, sub)
+            tr = g.toggle(getattr(st, attr), right - 52, ry[0] + 4)
 
-        def flip_shuffle(now):
-            st.shuffle = not st.shuffle
-            self.queue = []
-        self.hit(tr2, flip_shuffle)
+            def flip(now):
+                setattr(st, attr, not getattr(st, attr))
+                if on_change:
+                    on_change()
+            self.hit(tr, flip)
+            ry[0] += 70
+
+        if self.settings_tab == "show":
+            choice("Ken Burns", "Movimiento lento de las fotos", "kenburns",
+                   [(KB.OFF, "Apagado"), (KB.ZOOM, "Solo zoom"), (KB.PAN, "Zoom y paneo")])
+            switch("Un día como hoy", "Fotos de estas fechas de otros años", "memories")
+            switch("Fecha y lugar", "Abajo a la izquierda", "show_info")
+            choice("Reloj", "Abajo a la derecha", "clock", [("off", "Oculto"), ("12", "12 h"), ("24", "24 h")])
+
+            def reset_queue():
+                self.queue = []
+            switch("Orden aleatorio", "Mezcla las fotos", "shuffle", reset_queue)
+            choice("Volver a la presentación", "Sin mover el mouse", "idle_seconds",
+                   [(10, "10 s"), (15, "15 s"), (30, "30 s"), (60, "1 min")])
+        else:
+            choice("Apariencia", "Automático: claro de día", "theme",
+                   [("light", "Claro"), ("dark", "Oscuro"), ("auto", "Automático")], on_change=self.apply_theme)
+            if self.sensor.available:
+                light_sub = "Con el sensor de luz de la Mac"
+            else:
+                light_sub = "Por la luz: esta computadora no tiene sensor"
+            subs = {NIGHT.NEVER: "La pantalla siempre encendida", NIGHT.SCHEDULE: "Se apaga poco a poco",
+                    NIGHT.LIGHT: light_sub}
+            choice("Modo noche", subs.get(st.night, ""), "night",
+                   [(NIGHT.NEVER, "Nunca"), (NIGHT.SCHEDULE, "Por horario"), (NIGHT.LIGHT, "Por la luz")])
+            choice("Horario", "De noche a mañana", "night_hours",
+                   [("22-7", "22:00 a 7:00"), ("23-7", "23:00 a 7:00"), ("0-6", "0:00 a 6:00")],
+                   enabled=st.night == NIGHT.SCHEDULE)
+            choice("De noche", "Qué se ve en la pantalla", "night_style",
+                   [("off", "Apagada"), ("clock", "Reloj tenue")], enabled=st.night != NIGHT.NEVER)
+            g.label("Tecla N: simula la noche para probarlo", x + 28, ry[0] - 4, 12, color=T.text_secondary)
 
         g.rect(x + 28, y + h - 64, w - 56, 1, T.hairline, T.hairline_alpha)
         g.label(f"Vitrina {__version__}  ·  github.com/Danzelote/Vitrina", x + 28, y + h - 48, 12, color=T.text_secondary)
@@ -1289,7 +1532,8 @@ class App:
         clock = pygame.time.Clock()
         while self.running:
             self.step()
-            clock.tick(60)
+            clock.tick(5 if self.sleeping else 60)   # apagada: casi sin gastar
         self.close_all_videos()
+        self.backlight.restore()
         self.settings.save()
         pygame.quit()

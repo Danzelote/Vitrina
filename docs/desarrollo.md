@@ -45,7 +45,8 @@ La primera vez con una carpeta nueva, Vitrina prepara las miniaturas en segundo 
 | Clic en un año o un mes | Entra a él |
 | Selector de arriba (Años · Meses · Fotos · Colecciones) | Salta directo a ese nivel |
 | Clic en una colección | Muestra solo sus fotos (la etiqueta de arriba la quita) |
-| Ajustes | Apariencia (claro, oscuro, automático), tiempo de reposo, fecha y lugar, orden aleatorio |
+| Ajustes · Presentación | Ken Burns, Un día como hoy, fecha y lugar, reloj, orden aleatorio, tiempo para volver |
+| Ajustes · Pantalla | Apariencia (claro, oscuro, automático) y modo noche |
 | `+` / `-` | Zoom hacia el centro |
 | Clic en una foto | La abre en el visor |
 | Mouse quieto 1.5 s sobre un video | Vista previa en miniatura, sin sonido |
@@ -59,6 +60,7 @@ La primera vez con una carpeta nueva, Vitrina prepara las miniaturas en segundo 
 | `Esc` en la cuadrícula | Regresa a la presentación |
 | Sin mover el mouse (15 s, configurable) | Regresa a la presentación |
 | `i` | Muestra u oculta la fecha y el lugar |
+| `n` | Simula la noche (se apaga en segundos) para probar el modo noche; otra vez la regresa |
 | `f` | Pantalla completa |
 | `q` | Salir |
 
@@ -71,7 +73,7 @@ cd app
 python -m pytest tests
 ```
 
-Las pruebas cubren la lógica de la cámara: que se alcance cada orilla desde cualquier punto y que no haya saltos al entrar, salir o hacer zoom.
+Las pruebas cubren la lógica de la cámara (que se alcance cada orilla desde cualquier punto y que no haya saltos al entrar, salir o hacer zoom), que el Ken Burns nunca deje ver las orillas de la foto, las fechas de "Un día como hoy" y el horario nocturno.
 
 ## Estructura de la app
 
@@ -86,10 +88,13 @@ Las pruebas cubren la lógica de la cámara: que se alcance cada orilla desde cu
 | `app/vitrina/settings.py` | Ajustes guardados en `~/.config/vitrina/settings.json` |
 | `app/vitrina/video.py` | Reproducción de video con mpv, dibujada dentro de la interfaz |
 | `app/vitrina/theme.py` | Temas claro, oscuro y automático |
+| `app/vitrina/kenburns.py` | Movimiento lento de las fotos en la presentación |
+| `app/vitrina/memories.py` | "Un día como hoy" |
+| `app/vitrina/night.py` | Modo noche: horario, sensor de luz y brillo de la pantalla |
 | `app/vitrina/ui.py` | La interfaz: presentación, cuadrícula, niveles, visor y controles |
 
 ## Qué falta (siguientes versiones)
 
 - Búsqueda
-- Horario nocturno
 - La app web del celular
+- La imagen de la USB y el instalador

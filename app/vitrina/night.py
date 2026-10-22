@@ -1,0 +1,130 @@
+"""Modo noche: cuándo es de noche (por horario o por la luz del cuarto) y el
+brillo real de la pantalla cuando el sistema lo permite.
+
+En la Mac con Vitrina instalado (Linux) se usa el sensor de luz de la Mac y
+el brillo de la pantalla; en otras computadoras solo se oscurece la imagen.
+"""
+
+import glob
+import os
+import time
+
+NEVER, SCHEDULE, LIGHT = "never", "schedule", "light"
+SCHEDULES = {"22-7": (22, 7), "23-7": (23, 7), "0-6": (0, 6)}
+DIM_TIME = 20 * 60      # se apaga poco a poco en 20 minutos (y amanece igual)
+WAKE_TIME = 1.2         # al mover el mouse, despierta en poco más de un segundo
+STAY_AWAKE = 120        # tras despertarla, sigue encendida 2 minutos sin uso
+REDIM_TIME = 60         # y luego vuelve a apagarse en 1 minuto
+
+
+def in_schedule(key, t=None):
+    """¿La hora local `t` (struct_time) cae dentro del horario nocturno?"""
+    start, end = SCHEDULES.get(key, SCHEDULES["23-7"])
+    t = t or time.localtime()
+    h = t.tm_hour + t.tm_min / 60
+    if start < end:
+        return start <= h < end
+    return h >= start or h < end
+
+
+class LightSensor:
+    """Sensor de luz ambiental. En las MacBook viejas está en applesmc; en
+    otras computadoras, en iio. Sin sensor, `available` es False."""
+
+    DARK_SMC = 2         # valores de applesmc (0–255) que cuentan como oscuro
+    DARK_LUX = 5         # lux que cuentan como oscuro
+    CONFIRM = 60         # segundos seguidos antes de cambiar de opinión
+
+    def __init__(self):
+        self.path, self.kind = None, None
+        smc = glob.glob("/sys/devices/platform/applesmc.*/light")
+        iio = glob.glob("/sys/bus/iio/devices/iio:device*/in_illuminance*_raw") + \
+            glob.glob("/sys/bus/iio/devices/iio:device*/in_illuminance*_input")
+        if smc:
+            self.path, self.kind = smc[0], "smc"
+        elif iio:
+            self.path, self.kind = iio[0], "iio"
+        self.dark = False
+        self._since = None
+        self._last_read = 0.0
+
+    @property
+    def available(self):
+        return self.path is not None
+
+    def read(self):
+        try:
+            with open(self.path) as f:
+                raw = f.read().strip()
+        except OSError:
+            return None
+        try:
+            if self.kind == "smc":       # "(12,10)": izquierda y derecha
+                return max(int(v) for v in raw.strip("()").split(","))
+            return float(raw)
+        except ValueError:
+            return None
+
+    def update(self, now):
+        """Lee cada 2 s; cambia de día a noche (o al revés) solo si se mantiene."""
+        if not self.available or now - self._last_read < 2.0:
+            return self.dark
+        self._last_read = now
+        v = self.read()
+        if v is None:
+            return self.dark
+        limit = self.DARK_SMC if self.kind == "smc" else self.DARK_LUX
+        looks_dark = v <= limit
+        if looks_dark == self.dark:
+            self._since = None
+        elif self._since is None:
+            self._since = now
+        elif now - self._since >= self.CONFIRM:
+            self.dark, self._since = looks_dark, None
+        return self.dark
+
+
+class Backlight:
+    """Brillo real de la pantalla (/sys/class/backlight). Si no se puede
+    escribir, no hace nada y la app solo oscurece la imagen."""
+
+    def __init__(self):
+        self.dir = None
+        for d in sorted(glob.glob("/sys/class/backlight/*")):
+            if os.access(os.path.join(d, "brightness"), os.W_OK):
+                self.dir = d
+                break
+        self.max = self._read("max_brightness") or 0
+        self.original = self._read("brightness")
+        self._last = None
+
+    @property
+    def available(self):
+        return self.dir is not None and self.max > 0 and self.original is not None
+
+    def _read(self, name):
+        if not self.dir:
+            return None
+        try:
+            with open(os.path.join(self.dir, name)) as f:
+                return int(f.read().strip())
+        except (OSError, ValueError):
+            return None
+
+    def set(self, fraction):
+        """fraction 1 = brillo original, 0 = apagada."""
+        if not self.available:
+            return
+        value = round(self.original * max(0.0, min(1.0, fraction)))
+        if value == self._last:
+            return
+        try:
+            with open(os.path.join(self.dir, "brightness"), "w") as f:
+                f.write(str(value))
+            self._last = value
+        except OSError:
+            self.dir = None
+
+    def restore(self):
+        if self.available:
+            self.set(1.0)

@@ -23,7 +23,11 @@ Una Mac vieja tiene una pantalla buena, batería, teclado, trackpad y bocinas. V
 - La foto ocupa toda la pantalla. Cada pocos segundos se **funde** con la siguiente (no se desliza por la cuadrícula).
 - **Fotos verticales:** van al centro, con la misma foto desenfocada y oscurecida de fondo, estilo Apple TV.
 - **Videos:** se reproducen solos y sin sonido. Los verticales también llevan fondo desenfocado (un cuadro fijo del video, no el video en movimiento).
-- **Descripción** (lugar y fecha) discreta en una esquina. Se puede ocultar.
+- **Ken Burns:** cada foto se acerca, se aleja o se desplaza muy despacio mientras está en pantalla. Apagado, solo zoom, o zoom y paneo. No se aplica a los videos.
+- **Un día como hoy:** una de cada cuatro fotos es de estas fechas (±3 días) de años anteriores, con la etiqueta "Hace N años".
+- **Descripción** (lugar y fecha) discreta abajo a la izquierda. Se puede ocultar.
+- **Reloj** opcional abajo a la derecha, en 12 o 24 horas.
+- La fecha y el reloj se mueven unos pocos píxeles cada 3 minutos, sin que se note, para no marcar las pantallas viejas.
 - **Orden:** cronológico o aleatorio (sin repetir hasta que pasen todas).
 - Al entrar por primera vez aparece un aviso breve: "Mueve el mouse para explorar".
 
@@ -79,16 +83,19 @@ Al alejarte más allá del zoom mínimo, las fotos se agrupan (zoom semántico):
 ### 2.7 Regreso automático
 
 - Tras un tiempo sin mover el mouse (10 s a 1 min, configurable) vuelve al modo marco.
+- Con una foto abierta en el visor espera más: 10 minutos.
 - No regresa mientras se reproduce un video abierto ni mientras Ajustes está abierto.
 
 ### 2.8 Ajustes
+
+Ajustes tiene dos pestañas: **Presentación** (Ken Burns, Un día como hoy, fecha y lugar, reloj, orden aleatorio, tiempo para volver) y **Pantalla** (apariencia y modo noche).
 
 - **Apariencia:** claro, oscuro o automático (claro de día y oscuro de noche). La presentación siempre es negra; el tema cambia la cuadrícula, los niveles, el visor y los controles. Más adelante el automático podrá usar el sensor de luz.
 - Fotos y videos (mostrar el QR para agregar desde el celular).
 - Tiempo para volver a la presentación.
 - Mostrar fecha y lugar.
 - Orden aleatorio.
-- **Pantalla de noche:** por horario (por defecto), según la luz del cuarto o nunca. "Según la luz" usa el sensor de luz si la Mac lo tiene, o la cámara si el usuario lo activa (apagado por defecto; se toma una imagen pequeña cada ~30 s, solo se mide el brillo y se descarta; el LED verde de la cámara parpadea en cada medición).
+- **Modo noche:** nunca, por horario (22–7, 23–7 o 0–6) o según la luz del cuarto. Al llegar la noche la pantalla baja poco a poco durante 20 minutos y amanece igual de suave. Puede quedar **apagada** o con un **reloj tenue** al centro, como despertador. Mover el mouse la despierta; tras 2 minutos sin uso vuelve a apagarse en 1 minuto. Con la pantalla apagada la app casi no gasta. En la Mac con Vitrina instalado también baja el brillo real de la pantalla. "Según la luz" usa el sensor de luz si la Mac lo tiene (applesmc en las MacBook viejas), o más adelante la cámara si el usuario lo activa (apagado por defecto; se toma una imagen pequeña cada ~30 s, solo se mide el brillo y se descarta; el LED verde de la cámara parpadea en cada medición).
 - **Acerca de Vitrina:** versión, enlace al repositorio y a [Ko-fi](https://ko-fi.com/danzelot) para apoyar el proyecto. Discreto, sin interrumpir nunca la presentación.
 
 ---
@@ -204,7 +211,7 @@ vitrina/
 | Fase | Qué | Estado |
 |---|---|---|
 | **0** | Probar Linux en vivo en hardware real | ✅ Hecha (ver [compatibilidad](compatibilidad.md)) |
-| **1** | La app funcionando con una carpeta local, desarrollada en cualquier computadora | Siguiente |
+| **1** | La app funcionando con una carpeta local, desarrollada en cualquier computadora | ✅ Casi lista (falta la búsqueda) |
 | **2** | El indexer y la app web del celular | |
 | **3** | La imagen de la USB y el instalador | |
 | **4** | Primer arranque, actualizaciones, documentación y primera versión pública | |

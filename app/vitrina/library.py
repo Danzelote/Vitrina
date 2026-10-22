@@ -302,7 +302,9 @@ def make_demo(count=140, seed=7):
     import random
     from PIL import ImageDraw
 
-    folder = os.path.join(cache_dir(), f"demo-{count}")
+    from datetime import date as _date, timedelta
+    today = _date.today()
+    folder = os.path.join(cache_dir(), f"demo2-{count}")
     marker = os.path.join(folder, ".listo")
     if os.path.exists(marker):
         return folder
@@ -341,6 +343,9 @@ def make_demo(count=140, seed=7):
         year = rnd.choice([2021, 2022, 2023, 2024, 2024, 2025, 2025, 2026, 2026])
         month = rnd.randint(1, 9 if year == 2026 else 12)
         day = rnd.randint(1, 28)
+        if i % 15 == 3:   # algunas de estas fechas en años anteriores ("Un día como hoy")
+            d0 = today - timedelta(days=rnd.randint(-2, 2))
+            year, month, day = today.year - rnd.randint(1, 5), d0.month, min(d0.day, 28)
         sub = os.path.join(folder, coll)
         os.makedirs(sub, exist_ok=True)
         img.save(os.path.join(sub, f"{year}-{month:02d}-{day:02d}_{i:03d}.jpg"), "JPEG", quality=88)

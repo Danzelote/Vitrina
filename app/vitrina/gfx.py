@@ -159,12 +159,14 @@ class Gfx:
         t.draw(dstrect=(x, y + h - r, r, r), flip_y=True)
         t.draw(dstrect=(x + w - r, y + h - r, r, r), flip_x=True, flip_y=True)
 
-    def image(self, tex, x, y, w, h, alpha=1.0, radius=0.0, corner_color=None):
+    def image(self, tex, x, y, w, h, alpha=1.0, radius=0.0, corner_color=None, snap=True):
         """Dibuja `tex` llenando el rectángulo, recortada desde el centro para
-        conservar la proporción (como object-fit: cover)."""
+        conservar la proporción (como object-fit: cover). Sin `snap` se dibuja
+        en posiciones intermedias entre píxeles: movimientos lentos sin saltitos."""
         if alpha <= 0.003 or w <= 0 or h <= 0:
             return
-        x, y, w, h = self.snap(x, y, w, h)
+        if snap:
+            x, y, w, h = self.snap(x, y, w, h)
         if w <= 0 or h <= 0:
             return
         tw, th = tex.width, tex.height
@@ -276,6 +278,19 @@ class Gfx:
         t.alpha = int(255 * alpha)
         w, h = self.tsize(t)
         t.draw(dstrect=(x, y, w, h))
+
+    def label_shadow(self, s, x, y, size, alpha=1.0, bold=False):
+        """Texto blanco con una sombra suave, para leerse sobre cualquier foto."""
+        if alpha <= 0.003:
+            return 0, 0
+        sh = self.text(s, size, (0, 0, 0), bold)
+        t = self.text(s, size, (255, 255, 255), bold)
+        w, h = self.tsize(t)
+        sh.alpha = int(90 * alpha)
+        sh.draw(dstrect=(x, y + max(1.0, size / 22), w, h))
+        t.alpha = int(255 * alpha)
+        t.draw(dstrect=(x, y, w, h))
+        return w, h
 
     def label_centered(self, s, cx, y, size, alpha=1.0, bold=False, color=None):
         t = self.text(s, size, color, bold)
