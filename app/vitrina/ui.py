@@ -19,7 +19,7 @@ from . import __version__  # noqa: E402
 from . import camera as cam  # noqa: E402
 from . import config as C  # noqa: E402
 from . import levels as LV  # noqa: E402
-from .easing import EASE, Tween, lerp  # noqa: E402
+from .easing import EASE, Tween, cubic_bezier, lerp  # noqa: E402
 from .gfx import Gfx  # noqa: E402
 from .settings import Settings  # noqa: E402
 
@@ -27,6 +27,8 @@ FRAME, GRID, VIEWER = "frame", "grid", "viewer"
 PHOTOS, MONTHS, YEARS, COLLS = "photos", "months", "years", "colls"
 RANK = {PHOTOS: 0, MONTHS: 1, COLLS: 1, YEARS: 2}
 LEVEL_TIME = 0.75
+SWIPE_TIME = 0.6
+SWIPE_EASE = cubic_bezier(0.32, 0.72, 0.0, 1.0)   # suave al llegar, como en iOS
 GESTURE_GAP = 0.25     # segundos sin eventos de rueda = gesto nuevo
 BAR_H = 72
 
@@ -240,7 +242,7 @@ class App:
         if j is None:
             return
         self.gfx.screen(self.items[j], force=True)
-        self.swipe = (self.morph_i, j, d, Tween((0.0,), (1.0,), 0.45, EASE, now))
+        self.swipe = (self.morph_i, j, d, Tween((0.0,), (1.0,), SWIPE_TIME, SWIPE_EASE, now))
         self.last_move = now
 
     def finish_swipe(self):
@@ -724,12 +726,20 @@ class App:
         self.draw_tile(item, x, y, w * s, h * s, 1.0, radius, bg, w * s > C.THUMB_SHORT_SIDE * 1.3)
 
     def draw_swipe(self, now, bg):
+        """La foto que se va se desliza un poco, se achica y se desvanece; la que
+        llega entra desde el otro lado al mismo tiempo."""
         a, b, d, tw = self.swipe
         t = tw.value(now)[0]
-        ra, rb = self.viewer_rect(a), self.viewer_rect(b)
-        dist = (ra[2] + rb[2]) / 2 + 60
-        for i, r, off in ((a, ra, -d * t * dist), (b, rb, d * (1 - t) * dist)):
-            self.draw_tile(self.items[i], r[0] + off, r[1], r[2], r[3], 1.0, C.RADIUS_VIEW * self.view_scale(), bg, True)
+        dist = 0.28 * self.vw
+        radius = C.RADIUS_VIEW * self.view_scale()
+        out_a = max(0.0, 1.0 - t / 0.55)        # la que se va desaparece pronto...
+        in_a = min(1.0, max(0.0, (t - 0.15) / 0.7))  # ...y la nueva aparece casi encima
+        for i, off, k, alpha in ((a, -d * t * dist, 1.0 - 0.05 * t, out_a),
+                                 (b, d * (1 - t) * dist, 0.95 + 0.05 * t, in_a)):
+            x, y, w, h = self.viewer_rect(i)
+            w2, h2 = w * k, h * k
+            self.draw_tile(self.items[i], x + (w - w2) / 2 + off, y + (h - h2) / 2, w2, h2,
+                           alpha, radius * k, bg, True)
 
     def draw_level(self, lvl, now, alpha, view, bg):
         g, items = self.gfx, self.items
