@@ -267,3 +267,5 @@ h1 { font-size: 32px; font-weight: 600; letter-spacing: -0.02em; margin: 18px 4p
 .push-out { animation: push-out 0.36s var(--ease); }
 @keyframes push-in { from { opacity: 0; transform: translateX(40px); } }
 @keyframes push-out { from { opacity: 0; transform: translateX(-40px); } }
+
+.pillbtn { background: var(--accent); color: var(--accent-fg); border: 0; border-radius: 999px; padding: 8px 14px; font-weight: 600; font-size: 14px; }

@@ -37,6 +37,8 @@ const EN = {
   "Color del reloj": "Clock color", "Blanco": "White", "Azul": "Blue", "Rojo": "Red",
   "Esta Mac no tiene sensor de luz ni cámara.": "This Mac has no light sensor or camera.",
   "Brillo automático": "Auto-brightness", "Noche": "Night",
+  "Actualización": "Update", "Al día": "Up to date", "Actualizando… ({n} de {m})": "Updating… ({n} of {m})",
+  "Listo, reiniciando…": "Done, restarting…", "Actualizar a {v}": "Update to {v}", "Buscar": "Check",
   "El brillo mínimo se calibra en la Vitrina: Ajustes → Pantalla.": "Minimum brightness is calibrated on the Vitrina: Settings → Display.",
   "Vitrina": "Vitrina", "Espacio": "Storage", "{a} libres de {b}": "{a} free of {b}",
   "Contenido": "Content", "Versión": "Version",
@@ -507,6 +509,25 @@ function settingsPageHTML(page) {
     </div>`;
 }
 
+// Actualizar la Vitrina instalada (el avance también se ve en la pantalla de la Mac).
+function updateRow(u) {
+  const label = { checking: t("Buscando…"), current: t("Al día"), applying: t("Actualizando… ({n} de {m})", { n: u.step || 1, m: u.total }),
+    done: t("Listo, reiniciando…"), error: u.error || t("Error") }[u.state];
+  const btn = u.state === "new" ? `<button class="pillbtn" id="upd">${t("Actualizar a {v}", { v: esc(u.latest) })}</button>`
+    : ["checking", "applying", "done"].includes(u.state) ? `<span class="value">${label}</span>`
+    : `<span class="value">${label || ""}</span><button class="link" id="upd-check" style="margin-left:10px">${t("Buscar")}</button>`;
+  return `<div class="row"><span class="grow title">${t("Actualización")}</span>${btn}</div>`;
+}
+async function updateAction(action) {
+  try { S.info.update = Object.assign(S.info.update, await api("/api/update", { action })); } catch { toast(t("Sin conexión con la Vitrina")); }
+  renderSettings();
+  for (let i = 0; i < 90 && ["checking", "applying"].includes(S.info.update.state); i++) {
+    await new Promise((r) => setTimeout(r, 2000));
+    try { await refresh(); } catch {}
+    if (S.tab === "settings" && !S.setPage) renderSettings();
+  }
+}
+
 function renderSettings(dir) {
   const i = S.info, page = S.setPage;
   const anim = dir === "in" ? "push-in" : dir === "out" ? "push-out" : "";
@@ -531,10 +552,14 @@ function renderSettings(dir) {
         <div class="disk"><i style="width:${(100 * (1 - i.disk.free / i.disk.total)).toFixed(1)}%"></i></div></div>` : ""}
       <div class="row"><span class="grow title">${t("Contenido")}</span><span class="value">${count(i.photos, "1 foto", "{n} fotos")} · ${count(i.videos, "1 video", "{n} videos")}</span></div>
       <div class="row"><span class="grow title">${t("Versión")}</span><span class="value">${esc(i.version)}</span></div>
+      ${i.update && i.update.available ? updateRow(i.update) : ""}
       <a class="row nav" href="/api/diag" target="_blank"><span class="grow title">${t("Diagnóstico")}</span><span class="chevron">›</span></a>
     </div>
     <div class="card" style="margin-top:24px"><button class="row danger" id="unpair">${t("Desconectar este celular")}</button></div>
     <p class="sub" style="text-align:center;margin-top:18px">github.com/Danzelote/Vitrina · ko-fi.com/danzelot</p></div>`;
+    const upd = $view.querySelector("#upd"), updc = $view.querySelector("#upd-check");
+    if (upd) upd.onclick = () => updateAction("apply");
+    if (updc) updc.onclick = () => updateAction("check");
     $view.querySelectorAll("[data-page]").forEach((b) => {
       b.onclick = () => { S.setPage = b.dataset.page; renderSettings("in"); window.scrollTo(0, 0); };
     });

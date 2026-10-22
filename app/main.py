@@ -75,10 +75,14 @@ def main():
             loaded["error"] = exc
 
     worker = threading.Thread(target=load, daemon=True)
+    # Mientras carga, el logo cambia de hilo más seguido (si no, la carga lo traba a saltitos).
+    switch = sys.getswitchinterval()
+    sys.setswitchinterval(0.0005)
     worker.start()
     if splash:
         splash.run_until(lambda: not worker.is_alive())
     worker.join()
+    sys.setswitchinterval(switch)
     if "error" in loaded:
         raise loaded["error"]
 

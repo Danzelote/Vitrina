@@ -203,6 +203,17 @@ EN = {
     "Puedes intentarlo otra vez. Los detalles están en el Diagnóstico del celular.":
         "You can try again. Details are in Diagnostics on your phone.",
     "Cerrar": "Close",
+    # Actualizar
+    "Actualizaciones": "Updates",
+    "Versión {v}": "Version {v}",
+    "Versión {v} · al día": "Version {v} · up to date",
+    "Hay una versión nueva: {v}": "A new version is available: {v}",
+    "Listo: versión {v}. Reiniciando…": "Done: version {v}. Restarting…",
+    "Actualizar": "Update",
+    "Buscar": "Check",
+    "Buscando la versión nueva": "Looking for the new version",
+    "Descargando la versión {v}": "Downloading version {v}",
+    "Actualizando el logo de arranque": "Updating the boot logo",
     # Biblioteca vacía
     "No hay fotos todavía": "No photos yet",
     "Escanea el código con el celular para agregar fotos": "Scan the code with your phone to add photos",

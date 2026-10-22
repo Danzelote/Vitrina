@@ -46,6 +46,10 @@ Las fotos, el WiFi, los ajustes, los celulares conectados y el firmware de la c�
 
 Detalles técnicos: el disco queda con una partición de arranque EFI (300 MB) y el sistema en ext4. Las Mac arrancan con `/EFI/BOOT` sin tocar su NVRAM. El instalador es [`os/rootfs/opt/vitrina/install.sh`](../os/rootfs/opt/vitrina/install.sh) y cada imagen se prueba instalándola en un disco virtual y arrancándolo con UEFI ([`os/install-test.sh`](../os/install-test.sh)).
 
+## Actualizar
+
+Ya instalada, Vitrina se actualiza desde internet sin borrar fotos ni ajustes: **Ajustes → Pantalla → Actualizaciones** (en la Mac) o **Ajustes → Actualización** (en el celular). Baja de este repositorio el paquete `vitrina-app-<versión>.tar.gz` de la versión más nueva, revisa que llegó completo, cambia la app y se reinicia. Si la versión nueva no arranca, regresa sola a la anterior. Los cambios del sistema base (kernel, controladores) siguen necesitando reinstalar con la USB.
+
 ## Qué revisar en la Mac vieja
 
 - [ ] Arranca sola desde la USB, sin pantalla negra.

@@ -54,6 +54,11 @@ jobs:
         run: |
           v=$(sed -n 's/^__version__ = "\(.*\)"/\1/p' app/vitrina/__init__.py)
           echo "tag=v$v-usb${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+      - name: Paquete para actualizar (solo la app y archivos del sistema)
+        run: |
+          v=$(sed -n 's/^__version__ = "\(.*\)"/\1/p' app/vitrina/__init__.py)
+          tar --exclude='__pycache__' --exclude='app/tests' -czf "out/vitrina-app-$v.tar.gz" app requirements.txt os/rootfs
+          (cd out && sha256sum "vitrina-app-$v.tar.gz" > "vitrina-app-$v.tar.gz.sha256")
       - name: Herramientas
         run: sudo apt-get update -q && sudo apt-get install -y -q qemu-system-x86 qemu-utils ovmf socat
       - name: Probar en una máquina virtual
@@ -88,6 +93,7 @@ jobs:
             Instrucciones: docs/usb.md. Prueba automática en máquina virtual: ${{ steps.prueba.outcome }}. Prueba del instalador: ${{ steps.instalador.outcome }}.
           files: |
             out/vitrina-*.iso
+            out/vitrina-app-*.tar.gz
             out/*.sha256
             out/pantalla.png
             out/arranque-*.png

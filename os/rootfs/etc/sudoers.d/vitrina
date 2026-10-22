@@ -1,2 +1,2 @@
 # Vitrina maneja el WiFi, la hora, el apagado y la instalación sin pedir contraseña.
-vitrina ALL=(root) NOPASSWD: /usr/bin/nmcli, /usr/bin/systemctl poweroff, /usr/bin/systemctl reboot, /usr/bin/systemctl suspend, /usr/bin/timedatectl, /opt/vitrina/install.sh
+vitrina ALL=(root) NOPASSWD: /usr/bin/nmcli, /usr/bin/systemctl poweroff, /usr/bin/systemctl reboot, /usr/bin/systemctl suspend, /usr/bin/timedatectl, /opt/vitrina/install.sh, /opt/vitrina/update.sh

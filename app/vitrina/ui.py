@@ -32,6 +32,7 @@ from . import splash as SPL  # noqa: E402
 from . import installer as INST  # noqa: E402
 from . import ambient as AMB  # noqa: E402
 from . import watchdog as WATCH  # noqa: E402
+from . import updater as UPD  # noqa: E402
 from . import config as C  # noqa: E402
 from . import levels as LV  # noqa: E402
 from . import video as VID  # noqa: E402
@@ -210,6 +211,8 @@ class App:
         self.intro = {"start": splash.start if splash else now, "phase": "load"}
         self.shutting = None        # apagando o reiniciando: solo el logo
         self.inst = None            # instalar en esta Mac: {"stage", "at", "ins", "disk"}
+        self.updater = UPD.Updater()   # actualizar la Vitrina instalada desde GitHub
+        self.update_done_at = None
         self.help_open = False      # lista de atajos de teclado (tecla H)
         self.help_at = 0.0
         self.help_amt = 0.0
@@ -2790,6 +2793,24 @@ class App:
             else:
                 auto_sub = "Esta computadora no tiene sensor ni cámara"
             switch("Brillo automático", auto_sub, "auto_brightness")
+            if UPD.available():
+                up = self.updater
+                if up.checked_at is None or (time.monotonic() - up.checked_at > 600 and up.state in ("current", "error")):
+                    if up.state not in ("checking", "applying", "done"):
+                        up.check()
+                subs = {"idle": tr("Versión {v}", v=__version__), "checking": tr("Buscando…"),
+                        "current": tr("Versión {v} · al día", v=__version__),
+                        "new": tr("Hay una versión nueva: {v}", v=up.latest),
+                        "applying": tr("Paso {n} de {t} · {s}", n=max(1, up.step), t=up.total, s=tr(up.step_text or "Empezando")),
+                        "done": tr("Listo: versión {v}. Reiniciando…", v=up.latest),
+                        "error": up.error or ""}
+                row("Actualizaciones", subs.get(up.state, ""))
+                label = tr("Actualizar") if up.state == "new" else tr("Buscar")
+                if up.state not in ("applying", "done", "checking"):
+                    r = g.button(label, 0, -1000, h=36, size=13, pad=16)
+                    r = g.button(label, right - r[2], ry[0] + 2, h=36, size=13, pad=16, active=up.state == "new")
+                    self.hit(r, lambda now: up.apply() if up.state == "new" else up.check())
+                ry[0] += 70
             if self.backlight.available:
                 row("Brillo mínimo", "Calibrado" if st.min_brightness > 0 else "Para que nunca se vaya a negro")
                 r = g.button(tr("Calibrar"), 0, -1000, h=36, size=13, pad=16)     # se mide primero
@@ -3159,6 +3180,13 @@ class App:
         else:
             self.update_idle(now)
         self.check_wifi_joined(now)
+        if self.updater.state == "done":     # actualizada: la app se cierra y run.sh la abre ya nueva
+            if self.update_done_at is None:
+                self.update_done_at = now
+                self.toast_new = 0
+                self.toast = (tr("Listo: versión {v}. Reiniciando…", v=self.updater.latest), now)
+            elif now - self.update_done_at > 2.5:
+                self.running = False
         if now - self.wifi_checked > 5:      # estado de la red, cada 5 s
             self.wifi_checked = now
             self.wifi.refresh_status()

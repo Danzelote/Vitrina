@@ -299,7 +299,7 @@ class Handler(BaseHTTPRequestHandler):
         routes = {"/api/delete": self.delete, "/api/move": self.move, "/api/settings": self.settings,
                   "/api/collections/create": self.create_collection,
                   "/api/collections/rename": self.rename_collection, "/api/unpair": self.unpair,
-                  "/api/timezone": self.timezone}
+                  "/api/timezone": self.timezone, "/api/update": self.update}
         fn = routes.get(path)
         if not fn:
             return self.send(404, {"error": "no existe"})
@@ -312,6 +312,20 @@ class Handler(BaseHTTPRequestHandler):
         token = v.devices.add(device_name(self.headers.get("User-Agent")))
         cookie = f"{COOKIE}={token}; Max-Age=315360000; Path=/; HttpOnly; SameSite=Lax"
         return self.redirect("/", {"Set-Cookie": cookie})
+
+    def update(self, data):
+        """Buscar o instalar una versión nueva (solo en la Vitrina instalada)."""
+        if not self.need_device():
+            return
+        from .. import updater
+        up = self.v.app.updater
+        if not updater.available():
+            return self.send(400, {"error": "Solo en la Vitrina instalada"})
+        if data.get("action") == "apply" and up.state == "new":
+            up.apply()
+        elif data.get("action") == "check":
+            up.check()
+        return self.send(200, up.as_dict())
 
     def timezone(self, data):
         """El celular dice su zona horaria; la Vitrina (en la USB) la toma para su reloj."""
@@ -348,6 +362,7 @@ class Handler(BaseHTTPRequestHandler):
             "disk": disk,
             "settings": {k: getattr(st, k) for k in SETTINGS},
             "light_sensor": self.v.app.sensor.available,
+            "update": dict(self.v.app.updater.as_dict(), available=__import__("vitrina.updater", fromlist=["x"]).available()),
         })
 
     def photos(self):
