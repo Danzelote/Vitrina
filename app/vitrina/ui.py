@@ -27,9 +27,9 @@ FRAME, GRID, VIEWER = "frame", "grid", "viewer"
 PHOTOS, MONTHS, YEARS, COLLS = "photos", "months", "years", "colls"
 RANK = {PHOTOS: 0, MONTHS: 1, COLLS: 1, YEARS: 2}
 LEVEL_TIME = 0.75
-SWIPE_TIME = 0.6
+SWIPE_TIME = 0.5
 SWIPE_EASE = cubic_bezier(0.32, 0.72, 0.0, 1.0)   # suave al llegar, como en iOS
-SWIPE_UNIT = 28        # puntos que avanza la foto por cada unidad de desplazamiento del trackpad
+SWIPE_UNIT = 40        # puntos que avanza la foto por cada unidad de desplazamiento del trackpad
 GESTURE_GAP = 0.25     # segundos sin eventos de rueda = gesto nuevo
 BAR_H = 72
 
@@ -100,6 +100,11 @@ class App:
         self.swipe = None          # animación de cambio de foto en el visor
         self.drag = None           # arrastre con dos dedos en curso (progreso con signo)
         self.rubber = None         # rebote al arrastrar en la primera o la última foto
+        self.drag_vis = 0.0        # posición dibujada (sigue a self.drag suavemente)
+        self.drag_vel = 0.0
+        self.fingers = set()       # dedos sobre el trackpad (si el sistema los reporta)
+        self.touch_seen = False
+        self.ignore_swipe_until_gap = False
         self.hits = []
         self.ui_rects = []
         self.running = True
@@ -259,18 +264,28 @@ class App:
 
     def release_drag(self, now):
         """Al soltar: termina el cambio si se arrastró lo suficiente; si no, regresa."""
-        p, self.drag = self.drag, None
+        p, self.drag = self.drag_vis, None
+        vel = self.drag_vel
+        self.ignore_swipe_until_gap = True   # la inercia del trackpad ya no mueve nada
         d = 1 if p > 0 else -1
         t = min(abs(p), 1.0)
         j = self.neighbor(self.morph_i, d)
         if j is None:
             if t > 0:
-                self.rubber = Tween((p,), (0.0,), 0.35, SWIPE_EASE, now)
+                self.rubber = Tween((p,), (0.0,), 0.4, SWIPE_EASE, now)
             return
-        if t > 0.28:
-            self.animate_swipe(j, d, t, 1.0, SWIPE_TIME * (1 - t) + 0.12, now)
+        flick = vel * d > 1.2          # soltó con impulso hacia ese lado
+        if t > 0.5 or (flick and t > 0.05):
+            self.animate_swipe(j, d, t, 1.0, SWIPE_TIME * (1 - t) + 0.15, now)
         elif t > 0:
-            self.animate_swipe(j, d, t, 0.0, 0.3, now)
+            self.animate_swipe(j, d, t, 0.0, 0.25 + 0.3 * t, now)
+
+    def page_width(self, a=None, b=None):
+        """Distancia entre dos fotos en el visor. Suficiente para que la que se va
+        salga completa de la pantalla, y la nueva asome desde el primer momento."""
+        widths = [self.viewer_rect(i)[2] for i in (a, b) if i is not None]
+        w = max(widths) if widths else self.vw * 0.6
+        return self.vw / 2 + w / 2 + 40
 
     def current_viewer_index(self):
         if self.swipe and self.swipe["to"] >= 1.0:
@@ -450,6 +465,13 @@ class App:
                 self.on_wheel(getattr(e, "precise_y", e.y), now)
         elif e.type == pygame.MOUSEBUTTONUP and e.button == 1:
             self.on_click(now)
+        elif e.type == pygame.FINGERDOWN:
+            self.touch_seen = True
+            self.fingers.add(e.finger_id)
+        elif e.type == pygame.FINGERUP:
+            self.fingers.discard(e.finger_id)
+            if not self.fingers and self.drag is not None:
+                self.release_drag(now)
         elif e.type == pygame.WINDOWLEAVE:
             self.inside = False
             self.hover_i = self.hover_group = None
@@ -539,16 +561,21 @@ class App:
     def on_swipe(self, dx, now):
         """Arrastre con dos dedos en el visor: la foto sigue a los dedos y al
         soltar termina el cambio o regresa."""
+        gap = now - self.wheel_last
         self.wheel_last = now
         self.last_move = now
-        if dx == 0 or self.m_tween:
+        if gap > GESTURE_GAP:
+            self.ignore_swipe_until_gap = False
+        if dx == 0 or self.m_tween or self.ignore_swipe_until_gap:
             return
         if self.swipe:
             return  # deja terminar la animación anterior
         if self.drag is None:
             self.drag = 0.0
+            self.drag_vis = 0.0
+            self.drag_vel = 0.0
             self.rubber = None
-        step = dx * self.zoom_sign * SWIPE_UNIT / (0.28 * self.vw)
+        step = dx * self.zoom_sign * SWIPE_UNIT / self.page_width(self.morph_i)
         p = self.drag + step
         if self.neighbor(self.morph_i, 1 if p > 0 else -1) is None:
             p = self.drag + step * 0.3  # resistencia en la primera y la última
@@ -601,8 +628,14 @@ class App:
             self.lvl_tween = None
         if self.swipe and self.swipe["tw"].done(now):
             self.finish_swipe()
-        if self.drag is not None and now - self.wheel_last > 0.12:
-            self.release_drag(now)
+        if self.drag is not None:
+            prev = self.drag_vis
+            self.drag_vis += (self.drag - self.drag_vis) * (1 - math.exp(-dt / 0.035))
+            if dt > 0:
+                self.drag_vel = 0.7 * self.drag_vel + 0.3 * (self.drag_vis - prev) / dt
+            # Sin reporte de dedos (por ejemplo en Linux) se toma como soltado tras una pausa.
+            if not self.touch_seen and now - self.wheel_last > 0.35:
+                self.release_drag(now)
         if self.rubber and self.rubber.done(now):
             self.rubber = None
 
@@ -757,30 +790,27 @@ class App:
         self.draw_tile(item, x, y, w * s, h * s, 1.0, radius, bg, w * s > C.THUMB_SHORT_SIDE * 1.3)
 
     def draw_swipe(self, now, bg):
-        """La foto que se va se desliza un poco, se achica y se desvanece; la que
-        llega entra desde el otro lado al mismo tiempo."""
+        """Las fotos van una junto a otra como páginas (como en Fotos del iPhone):
+        la que se va sale completa por un lado y la nueva entra por el otro."""
         radius = C.RADIUS_VIEW * self.view_scale()
         if self.swipe:
             a, b, d = self.swipe["a"], self.swipe["b"], self.swipe["d"]
             t = self.swipe["tw"].value(now)[0]
         else:
-            p = self.drag if self.drag is not None else self.rubber.value(now)[0]
+            p = self.drag_vis if self.drag is not None else self.rubber.value(now)[0]
             a, d = self.morph_i, (1 if p > 0 else -1)
             b = self.neighbor(a, d)
             t = abs(p)
-            if b is None:  # sin foto de ese lado: solo un pequeño desplazamiento
+            if b is None:  # sin foto de ese lado: se mueve con resistencia
                 x, y, w, h = self.viewer_rect(a)
-                self.draw_tile(self.items[a], x - p * 0.28 * self.vw, y, w, h, 1.0, radius, bg, True)
+                self.draw_tile(self.items[a], x - p * self.page_width(a), y, w, h, 1.0, radius, bg, True)
                 return
-        dist = 0.28 * self.vw
-        out_a = max(0.0, 1.0 - t / 0.55)        # la que se va desaparece pronto...
-        in_a = min(1.0, max(0.0, (t - 0.15) / 0.7))  # ...y la nueva aparece casi encima
-        for i, off, k, alpha in ((a, -d * t * dist, 1.0 - 0.05 * t, out_a),
-                                 (b, d * (1 - t) * dist, 0.95 + 0.05 * t, in_a)):
+        page = self.page_width(a, b)
+        for i, off in ((a, -d * t * page), (b, d * (1 - t) * page)):
             x, y, w, h = self.viewer_rect(i)
-            w2, h2 = w * k, h * k
-            self.draw_tile(self.items[i], x + (w - w2) / 2 + off, y + (h - h2) / 2, w2, h2,
-                           alpha, radius * k, bg, True)
+            if x + off + w < 0 or x + off > self.vw:
+                continue
+            self.draw_tile(self.items[i], x + off, y, w, h, 1.0, radius, bg, True)
 
     def draw_level(self, lvl, now, alpha, view, bg):
         g, items = self.gfx, self.items

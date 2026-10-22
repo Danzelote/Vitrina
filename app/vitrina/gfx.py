@@ -78,8 +78,17 @@ class Gfx:
         self.white.alpha = int(255 * min(alpha, 1.0) * (color[3] / 255 if len(color) > 3 else 1))
         self.white.draw(dstrect=(x, y, w, h))
 
+    def snap(self, x, y, w, h):
+        """Alinea un rectángulo a píxeles reales, para que la foto y sus esquinas
+        coincidan exactamente (si no, quedan rayitas de 1 px en los bordes)."""
+        d = self.dpi
+        x0, y0 = round(x * d) / d, round(y * d) / d
+        x1, y1 = round((x + w) * d) / d, round((y + h) * d) / d
+        return x0, y0, x1 - x0, y1 - y0
+
     def corners(self, x, y, w, h, r, color, alpha=1.0):
-        r = min(r, w / 2, h / 2)
+        x, y, w, h = self.snap(x, y, w, h)
+        r = round(min(r, w / 2, h / 2) * self.dpi) / self.dpi
         if r < 0.75 or alpha <= 0.01:
             return
         t = self.corner
@@ -94,6 +103,9 @@ class Gfx:
         """Dibuja `tex` llenando el rectángulo, recortada desde el centro para
         conservar la proporción (como object-fit: cover)."""
         if alpha <= 0.003 or w <= 0 or h <= 0:
+            return
+        x, y, w, h = self.snap(x, y, w, h)
+        if w <= 0 or h <= 0:
             return
         tw, th = tex.width, tex.height
         target = w / h
