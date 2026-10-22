@@ -52,7 +52,7 @@ La primera vez con una carpeta nueva, Vitrina prepara las miniaturas en segundo 
 | Abrir un video | Se reproduce desde el inicio, con el sonido entrando suave |
 | `Espacio` o el botón de la barra | Pausa / reproduce el video (con fundido de sonido) |
 | Clic en la barra de progreso | Salta a ese punto del video |
-| En el visor: arrastrar con dos dedos | La foto sigue a los dedos; al soltar cambia de foto si avanzaste lo suficiente, o regresa |
+| En el visor: deslizar con dos dedos | Un gesto = una foto (anterior o siguiente); el video de destino se prepara durante la animación |
 | En el visor: flechas ← → o los botones laterales | Foto anterior o siguiente (respeta el filtro de colección) |
 | Clic en el visor o `Esc` | Regresa a la cuadrícula |
 | `Esc` en meses, años o colecciones | Entra un nivel |

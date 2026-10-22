@@ -4,9 +4,12 @@ Todo se dibuja como texturas escaladas: es lo más barato para la gráfica y
 funciona también con el renderizador por software de SDL si no hay aceleración.
 """
 
+import threading
+import time
 from collections import OrderedDict
 
 import pygame
+from PIL import Image
 from pygame._sdl2.video import Texture
 
 from . import config as C
@@ -33,6 +36,48 @@ class LRU(OrderedDict):
             self.popitem(last=False)
 
 
+class Loader:
+    """Decodifica imágenes (JPEG) en un hilo aparte. La interfaz pide una imagen
+    y la recibe lista unos milisegundos después, sin detener las animaciones.
+    Atiende primero lo pedido más recientemente (lo que se está viendo)."""
+
+    def __init__(self):
+        self.pending = OrderedDict()   # clave -> ruta
+        self.done = []                 # (clave, bytes, tamaño)
+        self.cv = threading.Condition()
+        threading.Thread(target=self._run, daemon=True).start()
+
+    def request(self, key, path):
+        with self.cv:
+            if key in self.pending:
+                self.pending.move_to_end(key)
+                return
+            self.pending[key] = path
+            while len(self.pending) > 400:   # olvida lo que ya no se necesita
+                self.pending.popitem(last=False)
+            self.cv.notify()
+
+    def take(self, limit):
+        with self.cv:
+            out, self.done = self.done[:limit], self.done[limit:]
+        return out
+
+    def _run(self):
+        while True:
+            with self.cv:
+                while not self.pending:
+                    self.cv.wait()
+                key, path = self.pending.popitem(last=True)
+            try:
+                with Image.open(path) as img:
+                    img = img.convert("RGB")
+                    data, size = img.tobytes(), img.size
+            except Exception:
+                data, size = None, None
+            with self.cv:
+                self.done.append((key, data, size))
+
+
 class Gfx:
     def __init__(self, renderer):
         self.r = renderer
@@ -51,6 +96,8 @@ class Gfx:
         self.pills = LRU(32)
         self.fonts = {}
         self.loads_left = 0
+        self.loader = Loader()
+        self.requested = set()
         self.dpi = 1.0  # píxeles reales por punto (2 en pantallas Retina)
 
     # -- básicos ------------------------------------------------------------
@@ -69,8 +116,20 @@ class Gfx:
         pygame.draw.circle(big, (255, 255, 255, 0), (256, 256), 256)
         return pygame.transform.smoothscale(big, (64, 64))
 
-    def begin_frame(self, max_loads=10):
-        self.loads_left = max_loads
+    def begin_frame(self, budget_ms=6.0):
+        """Sube a la gráfica las imágenes que el hilo ya decodificó, con un
+        límite de tiempo por cuadro para no frenar la animación."""
+        t0 = time.monotonic()
+        while (time.monotonic() - t0) * 1000 < budget_ms:
+            batch = self.loader.take(1)
+            if not batch:
+                break
+            (kind, key), data, size = batch[0]
+            self.requested.discard((kind, key))
+            if data is None:
+                continue
+            tex = self._tex(pygame.image.frombuffer(data, size, "RGB"))
+            {"t": self.thumbs, "s": self.screens, "b": self.backdrops}[kind].put(key, tex)
 
     def rect(self, x, y, w, h, color, alpha=1.0):
         if alpha <= 0.003 or w <= 0 or h <= 0:
@@ -124,38 +183,30 @@ class Gfx:
 
     # -- texturas de fotos ----------------------------------------------------
 
-    def _load(self, path):
-        try:
-            return self._tex(pygame.image.load(path))
-        except Exception:
-            return None
-
-    def _cached(self, cache, key, path, force=False):
+    def _cached(self, cache, kind, key, path):
+        """La textura si ya está; si no, la pide al hilo de carga y devuelve None."""
         tex = cache.get_item(key)
         if tex is not None or not path:
             return tex
-        if self.loads_left <= 0 and not force:
-            return None
-        self.loads_left -= 1
-        tex = self._load(path)
-        if tex is not None:
-            cache.put(key, tex)
-        return tex
+        if (kind, key) not in self.requested:
+            self.requested.add((kind, key))
+            self.loader.request((kind, key), path)
+        return None
 
     def thumb(self, item, force=False):
         if not item.ready:
             return None
-        return self._cached(self.thumbs, item.key, item.thumb_path, force)
+        return self._cached(self.thumbs, "t", item.key, item.thumb_path)
 
     def screen(self, item, force=False):
         if not item.ready:
             return None
-        return self._cached(self.screens, item.key, item.screen_path, force)
+        return self._cached(self.screens, "s", item.key, item.screen_path)
 
     def backdrop(self, item, force=False):
         if not item.ready or not item.vertical:
             return None
-        return self._cached(self.backdrops, item.key, item.backdrop_path, force)
+        return self._cached(self.backdrops, "b", item.key, item.backdrop_path)
 
     def has_screen(self, item):
         return item.key in self.screens

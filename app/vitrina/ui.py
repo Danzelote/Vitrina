@@ -206,13 +206,14 @@ class App:
         k = min(1.0, max_w / max(w, 1), (max_w * 0.75 if not item.vertical else max_w * 1.8) / max(h, 1))
         return max(64, w * k), max(64, h * k)
 
-    def start_video(self, role, i, path=None, audio=False, loop=False, max_w=1280):
+    def start_video(self, role, i, path=None, audio=False, loop=False, max_w=1280, start_paused=False):
         self.stop_video(role, fade=False)
         item = self.items[i]
         if not (VID.AVAILABLE and item.is_video and item.ready):
             return
         try:
-            p = VID.Player(self.ren, path or item.play_path, self.video_size(item, max_w), audio=audio, loop=loop)
+            p = VID.Player(self.ren, path or item.play_path, self.video_size(item, max_w), audio=audio,
+                           loop=loop, start_paused=start_paused)
         except Exception as exc:
             print("No se pudo reproducir el video:", exc)
             return
@@ -233,17 +234,22 @@ class App:
         entry = self.players.get(role)
         return entry[1] if entry and entry[0] == i else None
 
-    def video_texture(self, i):
-        for role in ("view", "frame", "next", "preview"):
+    def video_layer(self, i, now):
+        """(textura, opacidad) del video del elemento i, si se está reproduciendo."""
+        for role in ("view", "view_next", "frame", "next", "preview"):
             p = self.player_for(role, i)
-            if p and p.has_frame:
-                return p.texture
-        return None
+            if p and p.has_frame and p.texture is not None:
+                return p.texture, p.frame_alpha(now)
+        return None, 0.0
 
-    def update_players(self, dt):
+    def video_texture(self, i):
+        tex, a = self.video_layer(i, time.monotonic())
+        return tex if a >= 1.0 else None
+
+    def update_players(self, dt, now=None):
         for _role, (_i, p) in list(self.players.items()):
-            p.update(dt)
-        self.dying = [p for p in self.dying if p.update(dt)]
+            p.update(dt, now)
+        self.dying = [p for p in self.dying if p.update(dt, now)]
 
     def close_all_videos(self):
         for role in list(self.players):
@@ -324,6 +330,8 @@ class App:
         if j is None:
             return
         self.stop_video("view")
+        # Si llega un video, se prepara en pausa mientras dura la animación.
+        self.start_video("view_next", j, audio=True, start_paused=True)
         self.animate_swipe(j, d, 0.0, 1.0, SWIPE_TIME, now)
         self.last_move = now
 
@@ -338,7 +346,16 @@ class App:
             self.morph_i = self.hero = sw["b"]
             self.jump_camera(*self.plane.cell_center(sw["b"]), self.view_scale())
             if self.mode == VIEWER:
-                self.start_video("view", sw["b"], audio=True)
+                ready = self.players.pop("view_next", None)
+                if ready and ready[0] == sw["b"]:
+                    self.players["view"] = ready
+                    ready[1].play()
+                else:
+                    if ready:
+                        ready[1].close()
+                    self.start_video("view", sw["b"], audio=True)
+        else:
+            self.stop_video("view_next", fade=False)
 
     def release_drag(self, now):
         """Al soltar: termina el cambio si se arrastró lo suficiente; si no, regresa."""
@@ -380,6 +397,7 @@ class App:
         if self.swipe:
             self.finish_swipe()
         self.stop_video("view")   # el sonido se desvanece mientras la foto regresa
+        self.stop_video("view_next", fade=False)
         self.mode = GRID
         s = self.grid_scale()
         cx, cy = cam.clamp(*self.plane.cell_center(self.morph_i), s, self.plane, self.vw, self.vh)
@@ -727,7 +745,7 @@ class App:
         if p.ended:
             p.restart()
         else:
-            p.set_paused(not (p.paused or getattr(p, "_pause_when_silent", False)))
+            p.set_paused(p.is_playing)
         self.last_move = now
 
     def close_settings(self):
@@ -793,7 +811,7 @@ class App:
             self.start_video("preview", hv, path=it.preview_path if it.video_ready else it.path, loop=True, max_w=360)
         elif not want_preview and "preview" in self.players:
             self.stop_video("preview", fade=False)
-        self.update_players(dt)
+        self.update_players(dt, now)
         if can_hover and self.lvl != PHOTOS:
             self.hover_group = next((g for g, r in reversed(self.cluster_rects) if inside(r, self.mx, self.my)), None)
         else:
@@ -802,7 +820,7 @@ class App:
         if self.settings_open:
             self.last_move = now
         vp = self.player_for("view", self.morph_i)
-        if self.mode == VIEWER and vp and not vp.paused and not vp.ended:
+        if self.mode == VIEWER and vp and vp.is_playing:
             self.last_move = now   # no regresa a la presentación mientras se ve un video
         if self.mode == VIEWER and not self.swipe:
             for d in (1, -1):
@@ -842,6 +860,7 @@ class App:
         return 1.0 - t, lerp(1.0, k_away, t)
 
     def draw(self, now):
+        self._now = now
         g = self.gfx
         g.begin_frame()
         self.hits = []
@@ -915,7 +934,8 @@ class App:
 
     def draw_tile(self, item, x, y, w, h, alpha, radius, bg, prefer_screen=False, idx=None, badge=False):
         g = self.gfx
-        tex = self.video_texture(idx) if idx is not None and item.is_video else None
+        vtex, va = self.video_layer(idx, self._now) if idx is not None and item.is_video else (None, 0.0)
+        tex = vtex if va >= 1.0 else None
         if tex is None and prefer_screen:
             tex = g.screen(item, force=True)
         if tex is None:
@@ -925,6 +945,8 @@ class App:
             g.corners(x, y, w, h, radius, bg, alpha)
             return
         g.image(tex, x, y, w, h, alpha, radius, bg)
+        if vtex is not None and 0 < va < 1.0:   # el video aparece suave sobre su portada
+            g.image(vtex, x, y, w, h, alpha * va, radius, bg)
         if badge and item.is_video and w > 90:
             self.draw_video_badge(item, x, y, w, h, alpha, idx)
 
@@ -1023,7 +1045,8 @@ class App:
             back = g.backdrop(item, force=True)
             if back:
                 g.image(back, -40, -40, self.vw + 80, self.vh + 80, alpha=a)
-        tex = self.video_texture(nxt) or g.screen(item, force=True)
+        vtex, va = self.video_layer(nxt, now)
+        tex = (vtex if va >= 1.0 else None) or g.screen(item, force=True)
         if tex:
             g.image(tex, *self.frame_rect(item), alpha=a)
 
@@ -1132,7 +1155,7 @@ class App:
         g.round_rect(x, y, w, h, (44, 44, 48, 215), a)
         self.ui_rects.append((x, y, w, h))
         bx, cy = x + 10, y + h / 2
-        playing = not p.paused and not p.ended and not getattr(p, "_pause_when_silent", False)
+        playing = p.is_playing
         if playing:
             g.rect(bx + 10, cy - 8, 5, 16, C.TEXT, a)
             g.rect(bx + 20, cy - 8, 5, 16, C.TEXT, a)
@@ -1153,11 +1176,8 @@ class App:
             g.round_rect(px, cy - 2, max(4, pw * frac), 4, (255, 255, 255, 255), a)
 
         def seek(now, px=px, pw=pw, dur=dur):
-            try:
-                p.mpv.seek(max(0.0, (self.mx - px) / pw) * dur, reference="absolute")
-                p.set_paused(False)
-            except Exception:
-                pass
+            p.seek(max(0.0, (self.mx - px) / pw) * dur)
+            p.play()
             self.last_move = now
         self.hit((px, y, pw, h), seek)
 
