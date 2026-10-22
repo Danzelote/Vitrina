@@ -13,6 +13,9 @@ const EN = {
   "Elegir fotos y videos": "Choose photos and videos",
   "Mantén esta pantalla abierta mientras se suben.": "Keep this screen open while uploading.",
   "Subiendo {a} de {b}": "Uploading {a} of {b}", "Listo: {n} subidas": "Done: {n} uploaded", "No había nada nuevo": "Nothing new to add",
+  "Preparando las fotos…": "Getting your photos ready…",
+  "El celular las está alistando para subirlas. Con muchas fotos o videos puede tardar un poco.":
+    "Your phone is preparing them for upload. With many photos or videos this can take a moment.",
   "En espera": "Waiting", "Lista": "Done", "Ya estaba": "Already there", "No compatible": "Not supported",
   "Error": "Error", "Reintentar": "Retry",
   "Todas": "All", "Seleccionar": "Select", "Cancelar": "Cancel", "Mover": "Move", "Borrar": "Delete",
@@ -144,8 +147,11 @@ function renderUpload() {
     ${chipsHTML(S.uploadColl, false, true)}
     <label class="btn">
       <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>${t("Elegir fotos y videos")}
-      <input id="pick" type="file" accept="image/*,video/*" multiple hidden>
+      <input id="pick" type="file" accept="image/*,image/heic,image/heif,video/*" multiple hidden>
     </label>
+    ${S.picking === "wait" ? `<div class="card preparing"><span class="spin"></span>
+      <div><div class="title">${t("Preparando las fotos…")}</div>
+      <div class="note">${t("El celular las está alistando para subirlas. Con muchas fotos o videos puede tardar un poco.")}</div></div></div>` : ""}
     ${ups.length ? `
       <div class="card uploads">
         <div class="summary">
@@ -156,7 +162,10 @@ function renderUpload() {
         </div>
         ${ups.slice().reverse().map(upRow).join("")}
       </div>` : ""}`;
-  $view.querySelector("#pick").addEventListener("change", (e) => { addUploads([...e.target.files]); e.target.value = ""; });
+  const pick = $view.querySelector("#pick");
+  pick.addEventListener("click", () => { S.picking = "open"; });
+  pick.addEventListener("cancel", () => { S.picking = null; render(); });
+  pick.addEventListener("change", (e) => { S.picking = null; addUploads([...e.target.files]); e.target.value = ""; });
   bindChips((c) => { S.uploadColl = c; localStorage.setItem("coll", c); render(); }, true);
 }
 
@@ -527,6 +536,15 @@ function ask(title, value, okLabel) {
   });
 }
 
+// Al cerrar el selector de fotos, el celular tarda en entregar los archivos
+// (los convierte o los baja de iCloud). Mientras, se avisa en la página.
+window.addEventListener("focus", () => {
+  if (S.picking === "open") {
+    S.picking = "wait";
+    if (S.tab === "upload") render();
+    setTimeout(() => { if (S.picking === "wait") { S.picking = null; if (S.tab === "upload") render(); } }, 90000);
+  }
+});
 window.addEventListener("resize", () => document.querySelectorAll(".seg").forEach((seg) => placePill(seg, true)));
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden && S.info) refresh().then(() => { if (!S.selecting) render(); }).catch(() => {});

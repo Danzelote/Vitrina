@@ -127,6 +127,10 @@ Las fotos **viven en la propia Mac**. No dependen de Google Drive ni de iCloud.
 - **La fecha** suele llegar bien al subir directo desde la galería (mucho mejor que por WhatsApp). Si falta, se usa la fecha del archivo.
 - **La ubicación** llega si el celular la incluye (en el iPhone, al elegir las fotos aparece "Ubicación incluida"; algunos navegadores la quitan, ver [WebKit bug 207088](https://bugs.webkit.org/show_bug.cgi?id=207088)). Con ubicación, la Vitrina muestra el lugar ("Oaxaca de Juárez, México") sin internet: busca la ciudad más cercana en una lista de GeoNames incluida con la app. Sin ubicación, las **colecciones hacen de "lugar"**.
 
+### Fotos RAW de cámara
+
+Los RAW (Canon .CR2/.CR3, Nikon .NEF, Sony .ARW, .DNG…) se aceptan usando la vista previa JPEG de tamaño completo que cada cámara guarda dentro del archivo: es instantánea y no necesita librerías pesadas para revelar.
+
 ### Videos del iPhone
 
 Vienen en HEVC, a veces 4K. La Mac los convierte a un formato ligero; en un Core 2 Duo un video de un minuto puede tardar varios minutos. El celular muestra "Procesando…" mientras tanto.

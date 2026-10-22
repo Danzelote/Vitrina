@@ -49,7 +49,9 @@ BACKDROP_SIZE = (160, 100)
 THUMB_CACHE = 320
 SCREEN_CACHE = 6
 
-IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"}
+IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif",
+              # RAW de cámara: se usa la vista previa que traen dentro (ver raw.py)
+              ".cr2", ".cr3", ".nef", ".nrw", ".arw", ".srf", ".sr2", ".dng", ".raf", ".orf", ".rw2", ".pef", ".srw"}
 VIDEO_EXTS = {".mp4", ".mov", ".m4v", ".avi", ".mkv", ".3gp"}
 
 # Video: versión ligera para reproducir y clip de vista previa

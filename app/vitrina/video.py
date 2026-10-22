@@ -34,8 +34,9 @@ except Exception:  # pragma: no cover
 # Parámetros del render por software de libmpv (render.h)
 _SW_SIZE, _SW_FORMAT, _SW_STRIDE, _SW_POINTER = 17, 18, 19, 20
 FADE_IN_FRAME = 0.25   # segundos en que el primer cuadro aparece sobre la portada
-AUDIO_IN = 0.2         # el sonido entra en 0.2 s (corto, para oírlo desde el inicio)
-AUDIO_OUT = 0.45       # y sale en 0.45 s
+AUDIO_IN = 0.3         # fundido de entrada al empezar (lo hace mpv, justo cuando suena)
+AUDIO_RESUME = 0.25    # al reanudar después de una pausa
+AUDIO_OUT = 0.5        # fundido de salida al pausar, deslizar o cerrar
 AUDIO_TAIL = 0.35      # espera a que suene lo que ya estaba en el búfer antes de pausar o cerrar
 _THREADS = []          # hilos de video vivos (para esperarlos al salir)
 
@@ -64,8 +65,10 @@ class Player:
         self.w, self.h = max(2, int(size[0]) // 2 * 2), max(2, int(size[1]) // 2 * 2)
         self.audio = audio
         self.loop = loop
-        self.volume = 0.0
-        self.target_volume = 0.0 if start_paused or not audio else 100.0
+        # El fundido de entrada del inicio lo hace mpv (afade) en el momento exacto
+        # en que empieza a sonar; el volumen queda arriba desde ya.
+        self.volume = 100.0 if audio else 0.0
+        self.target_volume = self.volume
         self.silent_since = None         # cuándo llegó a 0 el volumen (para el búfer de audio)
         self.want_pause = start_paused
         self.pause_when_silent = False
@@ -122,7 +125,8 @@ class Player:
             opts["ao"] = "null"
             opts["mute"] = True
         else:
-            opts["volume"] = 0
+            opts["volume"] = 100
+            opts["af"] = f"lavfi=[afade=t=in:d={AUDIO_IN}]"
         if self.loop:
             opts["loop_file"] = "inf"
         ctx = None
@@ -236,9 +240,7 @@ class Player:
         now = time.monotonic() if now is None else now
         if self.audio:
             if self.volume < self.target_volume:
-                # Sube solo cuando el video ya se ve: así el sonido entra junto con la imagen.
-                if self.has_frame:
-                    self.volume = min(self.target_volume, self.volume + 100.0 / AUDIO_IN * dt)
+                self.volume = min(self.target_volume, self.volume + 100.0 / AUDIO_RESUME * dt)
             elif self.volume > self.target_volume:
                 self.volume = max(self.target_volume, self.volume - 100.0 / AUDIO_OUT * dt)
             if self.volume > 0.0:

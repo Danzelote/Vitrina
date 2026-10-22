@@ -44,3 +44,22 @@ def test_safe_name():
     assert livelib.safe_name("../../etc/passwd") == "passwd"
     assert livelib.safe_name(".oculto") == "oculto"
     assert livelib.safe_name('a/b:c*?"<>|') == "b:c" or livelib.safe_name('a/b:c*?"<>|') == "bc"
+
+
+def test_raw_preview(tmp_path):
+    from io import BytesIO
+    from vitrina import raw
+    big, small, tif = BytesIO(), BytesIO(), BytesIO()
+    Image.new("RGB", (300, 200), (10, 120, 200)).save(big, "JPEG")
+    Image.new("RGB", (40, 30), (200, 0, 0)).save(small, "JPEG")
+    im = Image.new("RGB", (8, 8))
+    exif = im.getexif()
+    exif[0x0112] = 6                       # girada: hay que enderezarla
+    exif[306] = "2023:07:15 18:30:00"
+    im.save(tif, "TIFF", exif=exif)
+    path = tmp_path / "IMG_0001.CR2"
+    path.write_bytes(tif.getvalue() + small.getvalue() + b"\x00" * 50 + big.getvalue() + b"\x00" * 10)
+    img = raw.open_preview(str(path))
+    assert img.size == (200, 300) and img.info["raw_date"] == "2023:07:15 18:30:00"
+    it = library.scan_file(str(tmp_path), str(path))
+    assert it is not None and it.date == datetime(2023, 7, 15, 18, 30)

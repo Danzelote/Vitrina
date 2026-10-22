@@ -374,7 +374,15 @@ class App:
         self.morph_to(1.0, C.MORPH_TIME, now)
         self.last_move = now
         self.stop_video("preview", fade=False)
-        self.start_video("view", i, audio=True)   # empieza desde el inicio, con fundido de audio
+        warm = self.players.pop("warm", None)
+        if warm and warm[0] == i:
+            # Ya estaba cargado en pausa (el mouse se quedó encima): suena al instante.
+            self.players["view"] = warm
+            warm[1].play()
+        else:
+            if warm:
+                warm[1].close()
+            self.start_video("view", i, audio=True)   # empieza desde el inicio, con fundido de audio
 
     def neighbor(self, i, d):
         """Siguiente (d=1) o anterior (d=-1) foto visible con el filtro, o None."""
@@ -1069,6 +1077,17 @@ class App:
         hv = self.hover_i
         want_preview = (hv is not None and self.items[hv].is_video and self.items[hv].ready
                         and now - self.hover_since >= C.PREVIEW_DELAY and now >= self.long_until)
+        # Con el mouse encima de un video, se carga en pausa (con sonido) para que
+        # al abrirlo empiece de inmediato, sin esperar a que arranque el audio.
+        if self.mode == GRID:
+            want_warm = (hv is not None and self.items[hv].is_video and self.items[hv].video_ready
+                         and now - self.hover_since >= 0.25 and now >= self.long_until)
+            if want_warm and not self.player_for("warm", hv):
+                self.start_video("warm", hv, audio=True, start_paused=True)
+            elif not want_warm and "warm" in self.players:
+                self.stop_video("warm", fade=False)
+        elif "warm" in self.players:
+            self.stop_video("warm", fade=False)
         if want_preview and not self.player_for("preview", hv):
             it = self.items[hv]
             self.start_video("preview", hv, path=it.preview_path, loop=True, max_w=360)

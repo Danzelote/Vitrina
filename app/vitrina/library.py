@@ -21,6 +21,7 @@ from datetime import datetime
 from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 
 from . import config as C
+from . import raw
 
 try:  # HEIC del iPhone, si está instalado
     from pillow_heif import register_heif_opener
@@ -35,7 +36,10 @@ HEIF_LOCK = threading.Lock()
 def open_image(path, decode=True):
     """Image.open, pero los HEIC se abren y decodifican sin que se encimen hilos.
     Con decode=False solo se leen los datos (fecha, lugar), sin la imagen."""
-    if os.path.splitext(path)[1].lower() in (".heic", ".heif"):
+    ext = os.path.splitext(path)[1].lower()
+    if ext in raw.RAW_EXTS:
+        return raw.open_preview(path)
+    if ext in (".heic", ".heif"):
         with HEIF_LOCK:
             img = Image.open(path)
             if decode:
@@ -219,6 +223,11 @@ def scan_file(folder, path):
             with open_image(path, decode=False) as img:
                 date = _date_from_exif(img)
                 lat, lon = _gps_from_exif(img)
+                if not date and img.info.get("raw_date"):
+                    try:
+                        date = datetime.strptime(img.info["raw_date"], "%Y:%m:%d %H:%M:%S")
+                    except ValueError:
+                        pass
         except Exception:
             return None
     date = date or _date_from_name(name) or datetime.fromtimestamp(st.st_mtime)
