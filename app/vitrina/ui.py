@@ -126,6 +126,7 @@ class App:
         self.hint_until = now + C.HINT_TIME
         self.hover_i = None
         self.hover_amt = 0.0
+        self.hover_amts = {}        # cuánto está "levantada" cada foto (crece al entrar el mouse, baja al salir)
         self.hover_group = None
         self.cluster_rects = []
         self.wheel_acc = 0.0
@@ -1336,11 +1337,21 @@ class App:
             py = self.cy + (self.my - self.vh / 2) / self.s
             hi = self.plane.index_at(px, py, len(self.items))
             if hi != self.hover_i:
-                self.hover_i, self.hover_amt = hi, 0.0
+                self.hover_i = hi
                 self.hover_since = now
-            self.hover_amt += (1.0 - self.hover_amt) * (1 - math.exp(-dt / 0.08))
         else:
             self.hover_i = None
+        # Cada foto crece al entrar el mouse y regresa suave al salir.
+        amts = self.hover_amts
+        if self.hover_i is not None:
+            amts.setdefault(self.hover_i, 0.0)
+        for i in list(amts):
+            target = 1.0 if i == self.hover_i else 0.0
+            tau = 0.08 if target else 0.14
+            amts[i] += (target - amts[i]) * (1 - math.exp(-dt / tau))
+            if not target and amts[i] < 0.003:
+                del amts[i]
+        self.hover_amt = amts.get(self.hover_i, 0.0) if self.hover_i is not None else 0.0
         # Vista previa de video al dejar el mouse encima un momento.
         hv = self.hover_i
         want_preview = (hv is not None and self.items[hv].is_video and self.items[hv].ready
@@ -1924,7 +1935,6 @@ class App:
         wx, wy = self.logo_origin()
         S, D = self.LOGO_SQ, self.LOGO_STEP
         homes = [(wx, wy), (wx + D, wy), (wx + D, wy + D), (wx, wy + D)]
-        inner = [(wx + S, wy + S), (wx + D, wy + S), (wx + D, wy + D), (wx + S, wy + D)]   # esquina que no se mueve
         center = (wx + 42 - S / 2, wy + 42 - S / 2)
         white = (255, 255, 255)
         if it["phase"] in ("load", "merge"):
@@ -1935,11 +1945,9 @@ class App:
             for k in range(4):
                 sc = self.logo_scale(k, t) if it["phase"] == "load" else lerp(it["scales"][k], 1.0, e)
                 size = S * sc
-                ix, iy = inner[k]
-                x = ix - size if k in (0, 3) else ix
-                y = iy - size if k in (0, 1) else iy
+                hx, hy = homes[k]                  # cada cuadro crece desde su propio centro
+                x, y = hx + (S - size) / 2, hy + (S - size) / 2
                 if it["phase"] == "merge":
-                    hx, hy = homes[k]
                     x = lerp(x, center[0], e)
                     y = lerp(y, center[1], e)
                 sq.color = white
@@ -2217,28 +2225,28 @@ class App:
         r1 = min(self.plane.rows - 1, int(((self.vh - ty) / s) // pitch) + 1)
         n = len(self.items)
         radius = C.RADIUS_GRID * s
-        hovered = None
         skip_morph = self.m > 0.001 and self.lvl == PHOTOS and not self.lvl_tween
         for row in range(r0, r1 + 1):
             for col in range(c0, c1 + 1):
                 i = row * self.plane.cols + col
                 if i >= n or (i == self.morph_i and skip_morph):
                     continue
-                if i == self.hover_i:
-                    hovered = i
-                    continue
+                if i in self.hover_amts:
+                    continue            # las levantadas van encima, después
                 a = alpha * (1.0 if self.matches(i) else 0.14)
                 cx, cy = self.plane.cell_center(i)
                 x, y = tx + s * (cx - C.CELL / 2), ty + s * (cy - C.CELL / 2)
                 self.draw_tile(self.items[i], x, y, C.CELL * s, C.CELL * s, a, radius, bg, idx=i, badge=True)
-        if hovered is not None:
-            cx, cy = self.plane.cell_center(hovered)
-            k = 1 + 0.07 * self.hover_amt
+        for i, amt in sorted(self.hover_amts.items(), key=lambda kv: kv[1]):
+            if i >= n or (i == self.morph_i and skip_morph):
+                continue
+            cx, cy = self.plane.cell_center(i)
+            k = 1 + 0.07 * amt
             w = C.CELL * s * k
             x = tx + s * cx - w / 2
             y = ty + s * cy - w / 2
-            a = alpha * (1.0 if self.matches(hovered) else 0.14)
-            self.draw_tile(self.items[hovered], x, y, w, w, a, radius * k, bg, idx=hovered, badge=True)
+            a = alpha * (1.0 if self.matches(i) else 0.14)
+            self.draw_tile(self.items[i], x, y, w, w, a, radius * k, bg, idx=i, badge=True)
 
     def draw_tile(self, item, x, y, w, h, alpha, radius, bg, prefer_screen=False, idx=None, badge=False, snap=True):
         g = self.gfx

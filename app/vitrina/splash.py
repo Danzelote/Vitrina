@@ -38,16 +38,15 @@ def logo_origin(vw, vh):
 
 
 def square_rects(vw, vh, t):
-    """Rectángulos de los 4 cuadros en el momento t (la esquina que da al centro no se mueve)."""
+    """Rectángulos de los 4 cuadros en el momento t. Cada uno crece desde su
+    propio centro, como las fotos de la cuadrícula al pasar el mouse."""
     wx, wy = logo_origin(vw, vh)
-    inner = [(wx + SQ, wy + SQ), (wx + STEP, wy + SQ), (wx + STEP, wy + STEP), (wx + SQ, wy + STEP)]
+    homes = [(wx, wy), (wx + STEP, wy), (wx + STEP, wy + STEP), (wx, wy + STEP)]
     out = []
     for k in range(4):
         size = SQ * logo_scale(k, t)
-        ix, iy = inner[k]
-        x = ix - size if k in (0, 3) else ix
-        y = iy - size if k in (0, 1) else iy
-        out.append((x, y, size))
+        cx, cy = homes[k][0] + SQ / 2, homes[k][1] + SQ / 2
+        out.append((cx - size / 2, cy - size / 2, size))
     return out
 
 

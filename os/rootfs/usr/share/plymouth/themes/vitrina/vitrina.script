@@ -26,11 +26,11 @@ label.SetX(Math.Int(cx - name.GetWidth() / 2));
 label.SetY(wy + 84 + 28 - 2);
 label.SetZ(10);
 
-// Esquina que no se mueve de cada cuadro (la que da al centro)
-ix[0] = wx + S; iy[0] = wy + S;
-ix[1] = wx + D; iy[1] = wy + S;
-ix[2] = wx + D; iy[2] = wy + D;
-ix[3] = wx + S; iy[3] = wy + D;
+// Centro de cada cuadro (cada uno crece desde su propio centro)
+mx[0] = wx + S / 2;     my[0] = wy + S / 2;
+mx[1] = wx + D + S / 2; my[1] = wy + S / 2;
+mx[2] = wx + D + S / 2; my[2] = wy + D + S / 2;
+mx[3] = wx + S / 2;     my[3] = wy + D + S / 2;
 
 fun smooth(u) {
     return u * u * (3 - 2 * u);
@@ -51,8 +51,8 @@ fun refresh() {
     for (k = 0; k < 4; k++) {
         size = S * scale_of(k, time);
         sq[k].SetImage(square.Scale(size, size));
-        if (k == 0 || k == 3) x = ix[k] - size; else x = ix[k];
-        if (k == 0 || k == 1) y = iy[k] - size; else y = iy[k];
+        x = mx[k] - size / 2;
+        y = my[k] - size / 2;
         sq[k].SetX(Math.Int(x));
         sq[k].SetY(Math.Int(y));
     }
