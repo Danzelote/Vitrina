@@ -3,7 +3,7 @@
 **Convierte una Mac vieja en un portarretratos digital para fotos y videos.**
 *Turn an old Mac into a digital photo and video frame.*
 
-> **Estado:** en diseño. Todavía no hay una versión instalable.
+> **Estado:** en desarrollo. Ya hay una primera versión que corre en tu computadora (ver [docs/desarrollo.md](docs/desarrollo.md)); todavía no hay imagen instalable.
 
 ---
 
@@ -42,6 +42,7 @@ Ver [docs/compatibilidad.md](docs/compatibilidad.md) para los modelos probados.
 
 - [docs/proyecto.md](docs/proyecto.md) — el documento del proyecto: diseño, decisiones, arquitectura y fases.
 - [docs/compatibilidad.md](docs/compatibilidad.md) — modelos probados y hallazgos.
+- [docs/desarrollo.md](docs/desarrollo.md) — cómo correr la app mientras se desarrolla.
 
 ## Apoya el proyecto
 
