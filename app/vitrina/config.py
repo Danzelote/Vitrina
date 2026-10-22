@@ -13,7 +13,7 @@ DEFAULT_ZOOM = 2
 
 # Márgenes de pantalla (px) que la cuadrícula respeta en sus límites
 MARGIN_X = 40
-MARGIN_TOP = 40
+MARGIN_TOP = 96          # bajo la barra superior
 MARGIN_BOTTOM = 84
 
 # Visor: la foto ocupa esta fracción de la altura de la pantalla

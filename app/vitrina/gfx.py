@@ -78,13 +78,13 @@ class Gfx:
         self.white.alpha = int(255 * min(alpha, 1.0) * (color[3] / 255 if len(color) > 3 else 1))
         self.white.draw(dstrect=(x, y, w, h))
 
-    def corners(self, x, y, w, h, r, color):
+    def corners(self, x, y, w, h, r, color, alpha=1.0):
         r = min(r, w / 2, h / 2)
-        if r < 0.75:
+        if r < 0.75 or alpha <= 0.01:
             return
         t = self.corner
         t.color = color[:3]
-        t.alpha = 255
+        t.alpha = int(255 * min(alpha, 1.0))
         t.draw(dstrect=(x, y, r, r))
         t.draw(dstrect=(x + w - r, y, r, r), flip_x=True)
         t.draw(dstrect=(x, y + h - r, r, r), flip_y=True)
@@ -106,8 +106,8 @@ class Gfx:
         tex.alpha = int(255 * min(alpha, 1.0))
         tex.draw(srcrect=pygame.Rect(round(src[0]), round(src[1]), max(1, round(src[2])), max(1, round(src[3]))),
                  dstrect=(x, y, w, h))
-        if radius > 0 and alpha > 0.98:
-            self.corners(x, y, w, h, radius, corner_color)
+        if radius > 0:
+            self.corners(x, y, w, h, radius, corner_color, alpha)
 
     # -- texturas de fotos ----------------------------------------------------
 
@@ -215,3 +215,76 @@ class Gfx:
         t = self.text(s, size, color, bold)
         w, _ = self.tsize(t)
         self.label(s, cx - w / 2, y, size, alpha, bold, color)
+
+    # -- controles ------------------------------------------------------------
+
+    def triangle(self, pts, color, alpha=1.0):
+        if alpha <= 0.003:
+            return
+        self.r.draw_blend_mode = pygame.BLENDMODE_BLEND
+        self.r.draw_color = (*color[:3], int(255 * min(alpha, 1.0)))
+        self.r.fill_triangle(*pts)
+
+    def round_rect(self, x, y, w, h, color, alpha=1.0, radius=None):
+        """Rectángulo redondeado (por defecto, forma de píldora)."""
+        if alpha <= 0.003 or w < 1 or h < 1:
+            return
+        if radius is None:
+            tex = self.pill_shape(w, h, color)
+        else:
+            key = ("rr", int(w), int(h), int(radius), color, self.dpi)
+            tex = self.pills.get_item(key)
+            if tex is None:
+                pw, ph = int(w * self.dpi), int(h * self.dpi)
+                surf = pygame.Surface((pw * 2, ph * 2), pygame.SRCALPHA)
+                pygame.draw.rect(surf, color, surf.get_rect(), border_radius=int(radius * self.dpi * 2))
+                tex = self._tex(pygame.transform.smoothscale(surf, (pw, ph)))
+                self.pills.put(key, tex)
+        tex.alpha = int(255 * min(alpha, 1.0))
+        tex.draw(dstrect=(x, y, w, h))
+
+    def button(self, label, x, y, h=44, alpha=1.0, active=False, bold=True, size=14, icon=None, pad=18):
+        """Botón tipo píldora. Devuelve su rectángulo (x, y, w, h)."""
+        fg = (17, 17, 17) if active else C.TEXT
+        bg = (245, 245, 247, 255) if active else (44, 44, 46, 255)
+        t = self.text(label, size, fg, bold)
+        tw, th = self.tsize(t)
+        iw = 14 if icon else 0
+        w = tw + pad * 2 + (iw + 8 if icon else 0)
+        self.round_rect(x, y, w, h, bg, alpha)
+        tx = x + pad
+        if icon == "play":
+            cy = y + h / 2
+            self.triangle(((tx + 1, cy - 7), (tx + 1, cy + 7), (tx + 13, cy)), fg, alpha)
+            tx += iw + 8
+        t.alpha = int(255 * min(alpha, 1.0))
+        t.draw(dstrect=(tx, y + (h - th) / 2, tw, th))
+        return (x, y, w, h)
+
+    def segmented(self, options, active_key, x, y, h=44, alpha=1.0, disabled=()):
+        """Selector segmentado. options = [(clave, etiqueta)]. Devuelve
+        [(clave, rect)] y el ancho total."""
+        size, pad, inset = 13, 14, 3
+        texts = [(k, self.text(lbl, size, (17, 17, 17) if k == active_key else C.TEXT, True)) for k, lbl in options]
+        widths = [self.tsize(t)[0] + pad * 2 for _, t in texts]
+        total = sum(widths) + inset * 2
+        self.round_rect(x, y, total, h, (44, 44, 46, 255), alpha)
+        out = []
+        cx = x + inset
+        for (k, t), w in zip(texts, widths):
+            a = alpha * (0.4 if k in disabled else 1.0)
+            if k == active_key:
+                self.round_rect(cx, y + inset, w, h - inset * 2, (245, 245, 247, 255), alpha)
+            tw, th = self.tsize(t)
+            t.alpha = int(255 * min(a, 1.0))
+            t.draw(dstrect=(cx + pad, y + (h - th) / 2, tw, th))
+            out.append((k, (cx, y, w, h)))
+            cx += w
+        return out, total
+
+    def toggle(self, on, x, y, alpha=1.0):
+        w, h = 52, 32
+        self.round_rect(x, y, w, h, (36, 138, 61, 255) if on else (72, 72, 74, 255), alpha)
+        kx = x + (23 if on else 3)
+        self.round_rect(kx, y + 3, 26, 26, (255, 255, 255, 255), alpha)
+        return (x, y, w, h)

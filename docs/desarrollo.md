@@ -20,8 +20,11 @@ pip install -r requirements.txt
 Desde la carpeta del proyecto, con el entorno activado (`source .venv/bin/activate`):
 
 ```bash
-# Con fotos de prueba
+# Con fotos de prueba (140)
 python app/main.py --demo
+
+# Con más fotos de prueba, para sentir los niveles de meses y años
+python app/main.py --demo 500
 
 # Con una carpeta tuya (cada subcarpeta es una colección)
 python app/main.py --folder ~/Pictures/MiCarpeta
@@ -38,12 +41,17 @@ La primera vez con una carpeta nueva, Vitrina prepara las miniaturas en segundo 
 |---|---|
 | Mover el mouse en la presentación | Pasa a la cuadrícula |
 | Mover el mouse en la cuadrícula | Recorre la cuadrícula |
-| Rueda o dos dedos | Zoom hacia la foto bajo el cursor |
+| Rueda o dos dedos | Zoom hacia la foto bajo el cursor. Más allá del zoom mínimo, con un gesto nuevo, pasa a meses y luego a años |
+| Clic en un año o un mes | Entra a él |
+| Selector de arriba (Años · Meses · Fotos · Colecciones) | Salta directo a ese nivel |
+| Clic en una colección | Muestra solo sus fotos (la etiqueta de arriba la quita) |
+| Ajustes | Tiempo de reposo, fecha y lugar, orden aleatorio |
 | `+` / `-` | Zoom hacia el centro |
 | Clic en una foto | La abre en el visor |
 | Clic en el visor o `Esc` | Regresa a la cuadrícula |
+| `Esc` en meses, años o colecciones | Entra un nivel |
 | `Esc` en la cuadrícula | Regresa a la presentación |
-| 15 s sin mover el mouse | Regresa a la presentación |
+| Sin mover el mouse (15 s, configurable) | Regresa a la presentación |
 | `i` | Muestra u oculta la fecha y el lugar |
 | `f` | Pantalla completa |
 | `q` | Salir |
@@ -68,12 +76,13 @@ Las pruebas cubren la lógica de la cámara: que se alcance cada orilla desde cu
 | `app/vitrina/camera.py` | Lógica de la cámara, sin dibujo: límites, recorrido con el mouse, zoom |
 | `app/vitrina/library.py` | Escaneo de fotos, fechas y caché de miniaturas |
 | `app/vitrina/gfx.py` | Ayudantes de dibujo sobre SDL2 |
-| `app/vitrina/ui.py` | La interfaz: presentación, cuadrícula y visor |
+| `app/vitrina/levels.py` | Grupos por mes, año y colección; su acomodo y sus mini presentaciones |
+| `app/vitrina/settings.py` | Ajustes guardados en `~/.config/vitrina/settings.json` |
+| `app/vitrina/ui.py` | La interfaz: presentación, cuadrícula, niveles, visor y controles |
 
 ## Qué falta (siguientes versiones)
 
 - Videos (con mpv)
-- Niveles de meses y años, y colecciones como carpetas
-- Barra superior con búsqueda y ajustes
-- Orden aleatorio y horario nocturno
+- Búsqueda
+- Horario nocturno
 - La app web del celular
