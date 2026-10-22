@@ -28,7 +28,7 @@ No hace falta presionar nada más: la imagen arranca sola, sin el menú invisibl
 
 ## Primeros pasos
 
-1. **WiFi:** en la pantalla de inicio, **Configurar WiFi**. Elige tu red y escribe la contraseña con el teclado de la Mac. Si la Mac está conectada por cable, no hace falta.
+1. **WiFi:** en la pantalla de inicio, **Configurar WiFi**. Con cámara, **Escanear código** y muestra el código QR del WiFi desde tu celular (iPhone: app Contraseñas → Wi-Fi → tu red → Mostrar código QR de la red; Android: Ajustes → Wi-Fi → Compartir). Si no, elige tu red y escribe la contraseña con el teclado de la Mac.
 2. **Celular:** escanea el código QR que aparece y sube unas fotos.
 3. **Apagar:** la tecla de encendido (o Ajustes → Pantalla → **Apagar…**) pregunta si quieres **Reposo**, **Apagar** o **Reiniciar**. Dejarla presionada unos segundos apaga de golpe.
 4. **Cerrar la tapa** pone la Mac en reposo; al abrirla sigue donde se quedó.
@@ -42,7 +42,9 @@ No hace falta presionar nada más: la imagen arranca sola, sin el menú invisibl
 - [ ] El celular sube fotos.
 - [ ] Los videos se ven y se oyen, con fundido de entrada y de salida.
 - [ ] Las animaciones se sienten fluidas (presentación, cuadrícula, visor, Ajustes).
-- [ ] El modo noche baja el brillo de verdad.
+- [ ] El brillo automático sube y baja con la luz del cuarto (Ajustes → Pantalla).
+- [ ] Calibrar brillo mínimo: la pantalla nunca se va a negro con las teclas de brillo.
+- [ ] El modo noche por horario muestra el reloj con el brillo bajo.
 - [ ] La tecla de encendido muestra la ventana de apagar.
 - [ ] Cerrar la tapa la pone en reposo y al abrirla vuelve (con WiFi).
 

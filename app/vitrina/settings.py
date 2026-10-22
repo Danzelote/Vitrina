@@ -28,10 +28,14 @@ class Settings:
     kenburns: str = "pan"        # "off" | "zoom" | "pan" (zoom y paneo)
     memories: bool = True        # "Un día como hoy"
     clock: str = "off"           # "off" | "12" | "24"
-    night: str = "never"         # "never" | "schedule" | "light"
+    night: str = "never"         # "never" | "schedule"
     night_hours: str = "23-7"    # ver night.SCHEDULES
     night_style: str = "off"     # "off" (apagada) | "window" (reloj ventana) | "classic" (reloj clásico)
     night_color: str = "blue"    # color del reloj clásico: "white" | "blue" | "red"
+    auto_brightness: bool = False  # brillo según la luz del cuarto (sensor o cámara)
+    brightness: float = -1.0     # brillo elegido, 0–1 (-1: el que tenía la Mac al arrancar)
+    bright_offset: float = 0.0   # con brillo automático: ajuste de la persona con las teclas
+    min_brightness: float = 0.0  # mínimo visible de la luz de fondo (calibrado); 0 = sin calibrar
 
     @classmethod
     def load(cls):
@@ -40,6 +44,9 @@ class Settings:
                 data = json.load(f)
             if data.get("night_style") == "clock":   # nombre de la versión 0.4.0
                 data["night_style"] = "classic"
+            if data.get("night") == "light":         # 0.8: el modo noche es por horario; la luz ajusta el brillo
+                data["night"] = "schedule"
+                data.setdefault("auto_brightness", True)
             return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
         except Exception:
             return cls()

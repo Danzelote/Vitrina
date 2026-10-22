@@ -46,6 +46,8 @@ PKGS=(
     alsa-utils
     # Cámara iSight (firmware tomado del macOS de la Mac) y lectura del disco de macOS
     isight-firmware-tools util-linux
+    # Brillo automático con la cámara (exposición fija) y lectura del código QR del WiFi
+    v4l-utils libzbar0t64
     # La app
     python3 python3-venv libmpv2 ffmpeg
 )
@@ -118,7 +120,7 @@ cp -a "$REPO/app/main.py" "$REPO/app/vitrina" "$ROOT/opt/vitrina/app/"
 cp "$REPO/requirements.txt" "$ROOT/opt/vitrina/"
 in_root python3 -m venv /opt/vitrina/venv
 in_root /opt/vitrina/venv/bin/pip install -q --no-cache-dir -r /opt/vitrina/requirements.txt
-in_root /opt/vitrina/venv/bin/python -c "import pygame, PIL, mpv, segno, pillow_heif; print('app: dependencias OK')"
+in_root /opt/vitrina/venv/bin/python -c "import pygame, PIL, mpv, segno, pillow_heif; from pyzbar import pyzbar; print('app: dependencias OK')"
 find "$ROOT/opt/vitrina" -name __pycache__ -prune -exec rm -rf {} +
 
 # -----------------------------------------------------------------------------

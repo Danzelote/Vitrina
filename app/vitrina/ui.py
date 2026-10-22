@@ -27,6 +27,7 @@ from . import i18n as I18N  # noqa: E402
 from .i18n import tr  # noqa: E402
 from .places import place_of  # noqa: E402
 from . import wifi as WIFI  # noqa: E402
+from . import qrscan as QR  # noqa: E402
 from . import config as C  # noqa: E402
 from . import levels as LV  # noqa: E402
 from . import video as VID  # noqa: E402
@@ -189,7 +190,13 @@ class App:
         self.wifi.refresh_status()
         self.wifi_checked = now
         self.pw = None              # contraseña de WiFi que se está escribiendo: {"ssid", "text", "show"}
-        self.backlight = NIGHT.Backlight()
+        self.backlight = NIGHT.Backlight(self.settings.min_brightness)
+        if self.settings.brightness < 0:
+            self.settings.brightness = self.backlight.initial_level()
+        self.bright = self.settings.brightness   # brillo que se ve ahorita (se acerca al objetivo)
+        self.bright_fast_until = -1e9
+        self.calib = None           # calibración del brillo mínimo en curso
+        self.scan = None            # cámara leyendo el código QR del WiFi: {"scanner", "start", "tex"}
         self.hits = []
         self.ui_rects = []
         self.running = True
@@ -339,10 +346,15 @@ class App:
 
     def video_layer(self, i, now):
         """(textura, opacidad) del video del elemento i, si se está reproduciendo."""
+        starting = False
         for role in ("view", "view_next", "frame", "next", "preview"):
             p = self.player_for(role, i)
             if p and p.has_frame and p.texture is not None:
                 return p.texture, p.frame_alpha(now)
+            starting = starting or p is not None
+        starting = starting or self.player_for("warm", i) is not None
+        if starting:        # ya se abrió de nuevo: la portada (primer cuadro) mientras arranca
+            return None, 0.0
         for j, p in reversed(self.dying):   # el video que se cierra se ve en movimiento hasta el final
             if j == i and p.has_frame and p.texture is not None:
                 return p.texture, 1.0
@@ -801,6 +813,23 @@ class App:
                 else:
                     self.open_power(now)
             return
+        if self.scan:
+            if e.type == pygame.KEYDOWN and e.key == pygame.K_ESCAPE:
+                self.stop_scan()
+            elif e.type == pygame.MOUSEMOTION:
+                self.mx, self.my = e.pos
+            elif e.type == pygame.MOUSEBUTTONUP and e.button == 1:
+                for rect, fn in reversed(self.hits):
+                    if inside(rect, self.mx, self.my):
+                        fn(now)
+                        break
+            return
+        if self.calib:
+            if e.type == pygame.KEYDOWN:
+                self.finish_calib(now, e.key != pygame.K_ESCAPE)
+            elif e.type == pygame.MOUSEBUTTONUP:
+                self.finish_calib(now, True)
+            return
         if self.power_dlg and e.type == pygame.KEYDOWN:
             if e.key == pygame.K_ESCAPE:
                 self.close_power(now)
@@ -1127,7 +1156,9 @@ class App:
 
     def update_idle(self, now):
         """Sin fotos: solo lo que hace falta para Ajustes y el tema."""
+        dt = max(0.0, min(0.1, now - self.last_t))
         self.last_t = now
+        self.update_brightness(dt, now)
         if self.theme_anim:
             src, dst, t0 = self.theme_anim
             p = min(1.0, (now - t0) / THEME_TIME)
@@ -1264,11 +1295,18 @@ class App:
                 v.change(v.STEP if action == "vol_up" else -v.STEP)
             self.show_hud("volume", v.level / 100, v.muted, now)
         else:
-            b = self.backlight
-            if not b.available:
+            if not self.backlight.available:
                 return
-            b.change_user(0.0625 if action == "bright_up" else -0.0625)
-            self.show_hud("brightness", b.user, False, now)
+            st = self.settings
+            step = 1 / 16 if action == "bright_up" else -1 / 16
+            if self.auto_brightness_active():
+                # Con brillo automático, las teclas ajustan "más o menos" sobre lo automático.
+                st.bright_offset = max(-1.0, min(1.0, st.bright_offset + step))
+            else:
+                st.brightness = max(0.0, min(1.0, st.brightness + step))
+            st.save()
+            self.bright_fast_until = now + 0.5
+            self.show_hud("brightness", self.target_brightness(), False, now)
 
     def show_hud(self, kind, level, muted, now):
         h = self.hud
@@ -1344,8 +1382,7 @@ class App:
             self.sensor = NIGHT.light_sensor()
         if self.night_force:
             self.forced_recent = True
-        self.dark = self.night_force or (st.night == NIGHT.SCHEDULE and NIGHT.in_schedule(st.night_hours)) \
-            or (st.night == NIGHT.LIGHT and self.sensor.update(now))
+        self.dark = self.night_force or (st.night == NIGHT.SCHEDULE and NIGHT.in_schedule(st.night_hours))
         if not self.dark:
             self.woke = False
             target = 0.0
@@ -1365,9 +1402,7 @@ class App:
             self.night = max(target, self.night - step)
         if self.night <= 0.0 and not self.night_force:
             self.forced_recent = False
-        if self.night > 0.0 or self.backlight._last is not None:
-            low = 0.0 if st.night_style == "off" else 0.2
-            self.backlight.set(max(low, 1.0 - self.night))
+        self.update_brightness(dt, now)
         sleeping = self.night >= 0.999 and st.night_style == "off" and self.mode == FRAME
         if sleeping != self.sleeping:
             self.sleeping = sleeping
@@ -1376,6 +1411,82 @@ class App:
                 p.set_paused(sleeping)
             if not sleeping:
                 self.last_slide = now
+
+    # ------------------------------------------------------------------ brillo
+
+    def auto_brightness_active(self):
+        return self.settings.auto_brightness and self.sensor.available and self.sensor.ambient() is not None
+
+    def target_brightness(self):
+        st = self.settings
+        if self.auto_brightness_active():
+            # Cuarto oscuro: muy bajo (pero visible); bien iluminado: casi al máximo.
+            return max(0.0, min(1.0, 0.06 + 0.9 * self.sensor.ambient() + st.bright_offset))
+        return st.brightness
+
+    def update_brightness(self, dt, now):
+        st = self.settings
+        if st.auto_brightness and self.sensor.available:
+            live = self.settings_open and self.settings_tab == "screen"
+            self.sensor.update(now, fast=live)
+        if self.calib:
+            self.update_calib(now)
+            return
+        target = self.target_brightness()
+        tau = 0.06 if now < self.bright_fast_until else 1.5      # lo automático cambia suave
+        self.bright += (target - self.bright) * (1 - math.exp(-dt / tau))
+        n = self.night
+        # De noche baja al mínimo visible de la luz de fondo (sin oscurecer la imagen);
+        # con "Apagada", al final la luz de fondo se apaga.
+        level = lerp(self.bright, min(self.bright, NIGHT.Backlight.SOFT), n)
+        off = max(0.0, (n - 0.7) / 0.3) if st.night_style == "off" else 0.0
+        self.backlight.apply(level, off)
+
+    def start_calib(self, now):
+        if not self.backlight.available:
+            return
+        self.close_settings(now)
+        self.calib = {"start": now, "hist": []}
+        self.show_pointer(False)
+
+    def update_calib(self, now):
+        """La luz de fondo baja poco a poco; la persona avisa cuando deja de verse."""
+        c, b = self.calib, self.backlight
+        t = now - c["start"]
+        top, wait, length = 0.30, 2.5, 16.0
+        frac = top if t < wait else max(0.0, top * (1 - (t - wait) / length))
+        raw = round(b.max * frac)
+        b.dim = 0.0
+        b.write_raw(raw)
+        c["hist"].append((now, raw))
+        c["frac"] = frac
+        if t > wait + length + 3:
+            self.finish_calib(now, False)      # nadie avisó: se deja como estaba
+
+    def finish_calib(self, now, picked):
+        c, b, st = self.calib, self.backlight, self.settings
+        self.calib = None
+        self.bright_fast_until = now + 0.6
+        if not picked or now - c["start"] < 2.5:
+            return
+        # Lo que tarda uno en reaccionar: se toma el valor de un momento antes, y un poquito más.
+        earlier = [r for tt, r in c["hist"] if tt <= now - 0.7]
+        raw = (earlier[-1] if earlier else c["hist"][-1][1]) + max(1, round(b.max * 0.01))
+        st.min_brightness = round(min(0.5, raw / b.max), 4)
+        b.floor = st.min_brightness
+        st.save()
+        self.toast = (tr("Brillo mínimo calibrado"), now)
+
+    def draw_calib(self, now):
+        g = self.gfx
+        self.ren.draw_color = (128, 128, 128, 255)
+        self.ren.clear()
+        cx, cy = self.vw / 2, self.vh / 2
+        g.label_centered(tr("Calibrar brillo mínimo"), cx, cy - 70, 30, bold=True, color=(255, 255, 255))
+        g.label_centered(tr("La pantalla se irá oscureciendo poco a poco."), cx, cy - 10, 17, color=(255, 255, 255))
+        g.label_centered(tr("Haz clic o presiona una tecla en cuanto deje de verse."), cx, cy + 18, 17,
+                         color=(255, 255, 255))
+        g.label_centered(tr("Esc para cancelar"), cx, cy + 70, 13, color=(230, 230, 230))
 
     # ------------------------------------------------------------------ dibujo
 
@@ -1408,6 +1519,12 @@ class App:
         g.begin_frame(now=now)
         self.hits = []
         self.ui_rects = []
+        if self.calib:
+            self.draw_calib(now)
+            return
+        if self.scan:
+            self.draw_scan(now)
+            return
         amt = self.settings_amt
         if self.night >= 0.999 and amt <= 0.001 and self.items:
             # Noche completa: solo el reloj sobre negro (la escena no se ve).
@@ -1415,6 +1532,7 @@ class App:
             self.ren.clear()
             self.draw_night(now)
             self.draw_power(now)
+            self.draw_dim()
             return
         if amt > 0.001:
             # Ajustes: la escena se dibuja aparte para desenfocarla detrás del panel.
@@ -1438,6 +1556,13 @@ class App:
             self.draw_scene(now)
         self.draw_night(now)
         self.draw_power(now)
+        self.draw_dim()
+
+    def draw_dim(self):
+        """Brillo por debajo del mínimo de la luz de fondo: se oscurece la imagen."""
+        d = self.backlight.dim
+        if d > 0.003:
+            self.gfx.rect(0, 0, self.vw, self.vh, (0, 0, 0), d)
 
     # ------------------------------------------------------------------ apagar
 
@@ -1921,9 +2046,6 @@ class App:
                 continue
             rect = self.kb_rect(i, full, now)
             g.image(tex, *rect, alpha=a, snap=False)
-            gray = None if item.is_video else g.gray(item)
-            if gray is not None:
-                g.image(gray, *rect, alpha=0.6 * a, snap=False)
         self.ren.target = None
         # 2) Desenfocada y tenue.
         # Muy desenfocado: casi manchas de color, sin detalle (ni pixeles de fotos estiradas).
@@ -1934,7 +2056,28 @@ class App:
         blur.blend_mode = pygame.BLENDMODE_NONE
         blur.alpha = 255
         blur.draw(dstrect=(0, 0, self.vw, self.vh))
-        g.rect(0, 0, self.vw, self.vh, (0, 0, 0), 0.35)
+        # Colores vivos: el desenfoque los apaga, así que se multiplican por sí
+        # mismos (c²: separa más los canales) y se suman dos veces (2·c²).
+        blur.blend_mode = pygame.BLENDMODE_MOD
+        blur.draw(dstrect=(0, 0, self.vw, self.vh))
+        sat = self.offscreen("nightsat", pygame.BLENDMODE_NONE)
+        self.ren.target = sat
+        self.ren.logical_size = (self.vw, self.vh)
+        win_src = self.offscreen_tex["nightwin"]
+        win_src.blend_mode = pygame.BLENDMODE_NONE
+        win_src.alpha = 255
+        win_src.draw(dstrect=(0, 0, self.vw, self.vh))
+        self.ren.target = win
+        self.ren.logical_size = (self.vw, self.vh)
+        sat.blend_mode = pygame.BLENDMODE_ADD
+        sat.alpha = 255
+        sat.draw(dstrect=(0, 0, self.vw, self.vh))
+        blur.blend_mode = pygame.BLENDMODE_ADD        # y un poco del color original, para que no quede oscuro
+        blur.alpha = 90
+        blur.draw(dstrect=(0, 0, self.vw, self.vh))
+        blur.alpha = 255
+        win_src.blend_mode = pygame.BLENDMODE_BLEND
+        blur.blend_mode = pygame.BLENDMODE_BLEND
         # 3) Se recorta con la forma de los números.
         mask = self.offscreen("nightmask", pygame.BLENDMODE_MOD)
         self.ren.target = mask
@@ -2093,7 +2236,8 @@ class App:
         g.label(tr("Ajustes"), x + 28, y + 24, 22, bold=True)
         done = g.button(tr("Listo"), x + w - 28 - 76, y + 20, h=36, active=True, size=14, pad=18)
         self.hit(done, lambda now: self.close_settings(now))
-        tabs = [("show", tr("Presentación")), ("screen", tr("Pantalla")), ("phone", tr("Celular"))]
+        tabs = [("show", tr("Presentación")), ("screen", tr("Pantalla")), ("night", tr("Noche")),
+                ("phone", tr("Celular"))]
         if self.wifi.available:
             tabs.append(("wifi", "WiFi"))
         tw_ = sum(g.tsize(g.text(lbl, 13, T.text, True))[0] + 28 for _, lbl in tabs) + 6
@@ -2151,21 +2295,28 @@ class App:
             choice("Idioma", "Español o inglés", "language", I18N.LANGS, on_change=self.apply_language)
             choice("Apariencia", "Automático: claro de día", "theme",
                    [("light", "Claro"), ("dark", "Oscuro"), ("auto", "Automático")], on_change=self.apply_theme)
-            if self.sensor.available and getattr(self.sensor, "kind", "") == "camera":
-                light_sub = "Con la cámara: el foquito verde parpadea"
-                if st.night == NIGHT.LIGHT:
-                    self.sensor.update(now, fast=True)        # lectura en vivo mientras se ve Ajustes
-                    if self.sensor.level is not None:
-                        state = tr("oscuro") if self.sensor.dark else tr("claro")
-                        light_sub = tr("Cámara: luz {n} de 255 · {s}", n=self.sensor.level, s=state)
-            elif self.sensor.available:
-                light_sub = "Con el sensor de luz de la Mac"
+            kind = getattr(self.sensor, "kind", "") if self.sensor.available else ""
+            if kind == "camera":
+                level = self.sensor.level
+                auto_sub = tr("Cámara: luz {n} de 255", n=level) if st.auto_brightness and level is not None \
+                    else "Con la cámara: el foquito verde parpadea"
+            elif kind:
+                auto_sub = "Con el sensor de luz de la Mac"
             else:
-                light_sub = "Por la luz: esta computadora no tiene sensor"
-            subs = {NIGHT.NEVER: "La pantalla siempre encendida", NIGHT.SCHEDULE: "Se apaga poco a poco",
-                    NIGHT.LIGHT: light_sub}
-            choice("Modo noche", subs.get(st.night, ""), "night",
-                   [(NIGHT.NEVER, "Nunca"), (NIGHT.SCHEDULE, "Por horario"), (NIGHT.LIGHT, "Por la luz")])
+                auto_sub = "Esta computadora no tiene sensor ni cámara"
+            switch("Brillo automático", auto_sub, "auto_brightness")
+            if self.backlight.available:
+                row("Brillo mínimo", "Calibrado" if st.min_brightness > 0 else "Para que nunca se vaya a negro")
+                r = g.button(tr("Calibrar"), 0, -1000, h=36, size=13, pad=16)     # se mide primero
+                r = g.button(tr("Calibrar"), right - r[2], ry[0] + 2, h=36, size=13, pad=16)
+                self.hit(r, lambda now: self.start_calib(now))
+                ry[0] += 70
+            if WIFI.SYSTEM:
+                r = g.button(tr("Apagar…"), x + 28, ry[0] - 10, h=36, size=13, pad=16)
+                self.hit(r, lambda now: self.open_power(now))
+        elif self.settings_tab == "night":
+            choice("Modo noche", "Reloj o pantalla apagada a cierta hora", "night",
+                   [(NIGHT.NEVER, "Nunca"), (NIGHT.SCHEDULE, "Por horario")])
             choice("Horario", "De noche a mañana", "night_hours",
                    [("22-7", "22:00–7:00"), ("23-7", "23:00–7:00"), ("0-6", "0:00–6:00")],
                    enabled=st.night == NIGHT.SCHEDULE)
@@ -2175,11 +2326,7 @@ class App:
             choice("Color del reloj clásico", "Rojo: el que menos molesta", "night_color",
                    [("white", "Blanco"), ("blue", "Azul"), ("red", "Rojo")],
                    enabled=st.night != NIGHT.NEVER and st.night_style == "classic")
-            if WIFI.SYSTEM:
-                r = g.button(tr("Apagar…"), x + 28, ry[0] - 10, h=36, size=13, pad=16)
-                self.hit(r, lambda now: self.open_power(now))
-            else:
-                g.label(tr("Tecla N: simula la noche para probarlo"), x + 28, ry[0] - 4, 12, color=T.text_secondary)
+            g.label(tr("Tecla N: simula la noche para probarlo"), x + 28, ry[0] - 4, 12, color=T.text_secondary)
         elif self.settings_tab == "wifi":
             self.draw_wifi_tab(x, y + 130, w, now)
         else:
@@ -2279,6 +2426,10 @@ class App:
             return
         b = g.button(tr("Buscando…") if wf.scanning else tr("Buscar redes"), right - 150, y, h=36, size=13, pad=16)
         self.hit(b, lambda now: wf.scan())
+        if QR.AVAILABLE and self.camera_device():
+            qb = g.button(tr("Escanear código"), 0, -1000, h=36, size=13, pad=16)       # se mide primero
+            qb = g.button(tr("Escanear código"), b[0] - 10 - qb[2], y, h=36, size=13, pad=16)
+            self.hit(qb, lambda now: self.start_scan(now))
         top = y + 64
         if not wf.networks:
             if not wf.scanning:
@@ -2296,6 +2447,94 @@ class App:
                 hgt = 6 + bar * 4
                 g.rect(right - 40 + bar * 9, ry + 26 - hgt, 6, hgt, T.text, 1.0 if on else 0.2)
             self.hit((left, ry - 8, right - left, 52), lambda now, n=net: self.choose_network(n))
+
+    # ------------------------------------------------------------------ QR del WiFi
+
+    def camera_device(self):
+        if self.sensor.available and getattr(self.sensor, "kind", "") == "camera":
+            return self.sensor.device
+        if time.monotonic() - getattr(self, "_cam_checked", -1e9) > 5:
+            self._cam_checked = time.monotonic()
+            self._cam_dev = NIGHT.CameraLight.find()
+        return getattr(self, "_cam_dev", None)
+
+    def start_scan(self, now):
+        dev = self.camera_device()
+        if not dev:
+            return
+        if self.pw is not None:
+            self.close_password()
+        if getattr(self.sensor, "kind", "") == "camera":
+            self.sensor.paused = True           # la cámara no se puede usar para dos cosas a la vez
+            deadline = time.monotonic() + 3
+            while self.sensor._busy and time.monotonic() < deadline:
+                time.sleep(0.05)
+        self.scan = {"scanner": QR.Scanner(dev), "start": now, "tex": None, "shown": -1}
+        self.show_pointer(True)
+
+    def stop_scan(self):
+        if not self.scan:
+            return
+        self.scan["scanner"].close()
+        self.scan = None
+        if getattr(self.sensor, "kind", "") == "camera":
+            self.sensor.paused = False
+
+    def draw_scan(self, now):
+        g, sc = self.gfx, self.scan
+        scanner = sc["scanner"]
+        if scanner.result:
+            wifi = scanner.result
+            self.stop_scan()
+            self.wifi.connect(wifi["ssid"], wifi["password"], wifi["hidden"])
+            self.toast = (tr("Conectando a {ssid}…", ssid=wifi["ssid"]), now)
+            return
+        if now - sc["start"] > 180:          # nadie lo usó: se apaga la cámara
+            self.stop_scan()
+            return
+        self.ren.draw_color = (0, 0, 0, 255)
+        self.ren.clear()
+        cx = self.vw / 2
+        pw_, ph = min(560, self.vw - 80), min(420, self.vh - 300)
+        pw_ = min(pw_, ph * 4 / 3)
+        ph = pw_ * 3 / 4
+        px, py = cx - pw_ / 2, (self.vh - ph) / 2 + 10
+        white, soft = (255, 255, 255), (190, 190, 196)
+        g.label_centered(tr("Muestra el código QR de tu WiFi"), cx, py - 84, 24, bold=True, color=white)
+        g.label_centered(tr("Acerca el celular a la cámara (unos 20–30 cm)."), cx, py - 46, 14, color=soft)
+        frame = scanner.frame
+        if frame is not None:
+            if sc["tex"] is None:
+                sc["tex"] = Texture(self.ren, (QR.W, QR.H), streaming=True)
+            if sc["shown"] != scanner.frame_n:
+                sc["shown"] = scanner.frame_n
+                sc["tex"].update(pygame.image.frombuffer(frame, (QR.W, QR.H), "RGB"))
+            sc["tex"].draw(dstrect=(px, py, pw_, ph), flip_x=True)       # como espejo
+        else:
+            g.round_rect(px, py, pw_, ph, (28, 28, 30), 1.0, 18)
+            msg = tr("No se pudo abrir la cámara") if scanner.error else tr("Abriendo la cámara…")
+            g.label_centered(msg, cx, py + ph / 2 - 10, 15, color=soft)
+        # Esquinas de guía
+        k, t_ = 34, 4
+        for left_side in (True, False):
+            for top_side in (True, False):
+                hx = px if left_side else px + pw_ - k
+                vx = px if left_side else px + pw_ - t_
+                hy = py if top_side else py + ph - t_
+                vy = py if top_side else py + ph - k
+                g.rect(hx, hy, k, t_, white)
+                g.rect(vx, vy, t_, k, white)
+        y2 = py + ph + 22
+        if scanner.seen_other:
+            g.label_centered(tr("Ese código no es de una red WiFi"), cx, y2, 14, color=(255, 159, 10))
+            y2 += 26
+        g.label_centered(tr("iPhone: app Contraseñas → Wi-Fi → tu red → Mostrar código QR de la red"), cx, y2, 13,
+                         color=soft)
+        g.label_centered(tr("Android: Ajustes → Wi-Fi → tu red → Compartir"), cx, y2 + 22, 13, color=soft)
+        with TH.using(TH.DARK):
+            r = g.button(tr("Cancelar"), 0, -1000, h=40, size=14)
+            r = g.button(tr("Cancelar"), cx - r[2] / 2, y2 + 58, h=40, size=14)
+        self.hit(r, lambda now: self.stop_scan())
 
     def draw_empty_library(self):
         with TH.using(TH.DARK):      # el fondo aquí es negro: textos claros
@@ -2439,6 +2678,7 @@ class App:
     def shutdown(self):
         """Cierra en orden: videos, texturas y al final la ventana. (Si Python
         libera las texturas después que la ventana, puede cerrarse con error.)"""
+        self.stop_scan()
         self.close_all_videos()
         self.backlight.restore()
         self.settings.save()

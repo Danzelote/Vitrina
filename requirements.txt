@@ -3,3 +3,4 @@ Pillow>=10
 pillow-heif>=0.16  # fotos HEIC del iPhone
 python-mpv>=1.0  # videos (necesita mpv instalado: brew install mpv)
 segno>=1.5  # código QR para emparejar el celular
+pyzbar>=0.1.9  # leer el código QR del WiFi con la cámara (necesita libzbar)

@@ -14,6 +14,9 @@ const EN = {
   "Mantén esta pantalla abierta mientras se suben.": "Keep this screen open while uploading.",
   "Subiendo {a} de {b}": "Uploading {a} of {b}", "Listo: {n} subidas": "Done: {n} uploaded", "No había nada nuevo": "Nothing new to add",
   "Preparando las fotos…": "Getting your photos ready…",
+  "El celular las está alistando para subirlas. Con muchas fotos o videos puede tardar varios minutos: deja esta página abierta.": "Your phone is getting them ready to upload. With many photos or videos this can take a few minutes: keep this page open.",
+  "Después de elegir, el celular prepara las fotos y videos antes de subirlos (con muchos, tarda un rato). La pantalla del celular se mantiene encendida mientras tanto.": "After you choose, your phone prepares the photos and videos before uploading (with many, it takes a while). Your phone's screen stays on meanwhile.",
+  "Ocultar": "Hide",
   "El celular las está alistando para subirlas. Con muchas fotos o videos puede tardar un poco.":
     "Your phone is preparing them for upload. With many photos or videos this can take a moment.",
   "En espera": "Waiting", "Lista": "Done", "Ya estaba": "Already there", "No compatible": "Not supported",
@@ -32,7 +35,8 @@ const EN = {
   "Modo noche": "Night mode", "Nunca": "Never", "Por horario": "Schedule", "Por la luz": "Room light",
   "Horario": "Schedule", "De noche": "At night", "Apagada": "Off", "Reloj ventana": "Window", "Reloj clásico": "Classic",
   "Color del reloj": "Clock color", "Blanco": "White", "Azul": "Blue", "Rojo": "Red",
-  "Esta Mac no tiene sensor de luz.": "This Mac has no light sensor.",
+  "Esta Mac no tiene sensor de luz ni cámara.": "This Mac has no light sensor or camera.",
+  "Brillo automático": "Auto-brightness", "Noche": "Night",
   "Vitrina": "Vitrina", "Espacio": "Storage", "{a} libres de {b}": "{a} free of {b}",
   "Contenido": "Content", "Versión": "Version",
   "Desconectar este celular": "Disconnect this phone", "¿Desconectar este celular?": "Disconnect this phone?",
@@ -153,9 +157,8 @@ function renderUpload() {
       <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>${t("Elegir fotos y videos")}
       <input id="pick" type="file" accept="image/*,image/heic,image/heif,video/*" multiple hidden>
     </label>
-    ${S.picking === "wait" ? `<div class="card preparing"><span class="spin"></span>
-      <div><div class="title">${t("Preparando las fotos…")}</div>
-      <div class="note">${t("El celular las está alistando para subirlas. Con muchas fotos o videos puede tardar un poco.")}</div></div></div>` : ""}
+    ${S.picking ? preparingHTML()
+      : !ups.length ? `<p class="note" style="color:var(--text2);font-size:13px;margin:10px 4px 0">${t("Después de elegir, el celular prepara las fotos y videos antes de subirlos (con muchos, tarda un rato). La pantalla del celular se mantiene encendida mientras tanto.")}</p>` : ""}
     ${ups.length ? `
       <div class="card uploads">
         <div class="summary">
@@ -164,13 +167,39 @@ function renderUpload() {
           <div class="bar"><i style="width:${(100 * sentBytes / totalBytes).toFixed(1)}%"></i></div>
           ${busy ? `<div class="note" style="margin-top:8px;color:var(--text2);font-size:13px">${t("Mantén esta pantalla abierta mientras se suben.")}</div>` : ""}
         </div>
-        ${ups.slice().reverse().map(upRow).join("")}
+        ${ups.map(upRow).join("")}
       </div>` : ""}`;
   const pick = $view.querySelector("#pick");
-  pick.addEventListener("click", () => { S.picking = "open"; });
-  pick.addEventListener("cancel", () => { S.picking = null; render(); });
+  // El aviso se pone antes de abrir el selector: así ya se ve al cerrarlo,
+  // mientras el celular convierte las fotos (la página no se entera hasta que termina).
+  pick.addEventListener("click", () => {
+    S.picking = "open"; stayAwake(true);
+    // Sin volver a dibujar la página: el selector sigue ligado a este mismo campo.
+    if (!$view.querySelector(".preparing")) {
+      $view.querySelector("label.btn").insertAdjacentHTML("afterend", preparingHTML());
+      $view.querySelectorAll("p.note").forEach((n) => n.remove());
+      bindUnpick();
+    }
+  });
+  pick.addEventListener("cancel", () => { S.picking = null; stayAwake(false); render(); });
   pick.addEventListener("change", (e) => { S.picking = null; addUploads([...e.target.files]); e.target.value = ""; });
+  bindUnpick();
   bindChips((c) => { S.uploadColl = c; localStorage.setItem("coll", c); render(); }, true);
+}
+
+function preparingHTML() {
+  return `<div class="card preparing"><span class="spin"></span>
+    <div class="grow"><div class="title">${t("Preparando las fotos…")}</div>
+    <div class="note">${t("El celular las está alistando para subirlas. Con muchas fotos o videos puede tardar varios minutos: deja esta página abierta.")}</div>
+    <button class="link" id="unpick" style="margin-top:6px;font-size:13px">${t("Ocultar")}</button></div></div>`;
+}
+function bindUnpick() {
+  const b = $view.querySelector("#unpick");
+  if (b) b.onclick = () => {
+    S.picking = null;
+    if (!S.uploads.some((x) => x.state === "wait" || x.state === "up")) stayAwake(false);
+    render();
+  };
 }
 
 function upRow(u) {
@@ -183,6 +212,31 @@ function upRow(u) {
       ${u.state === "up" ? `<div class="bar"><i style="width:${pct}%"></i></div>` : ""}</div>
     <div class="state ${cls}">${u.state === "up" ? pct + "%" : labels[u.state]}</div>
   </div>`;
+}
+
+// Pantalla del celular encendida mientras se preparan y suben las fotos: si se
+// bloquea, el iPhone pausa la página y la subida se corta. (La forma oficial,
+// navigator.wakeLock, solo funciona con https; el truco de siempre es un video
+// mudo e invisible en bucle.)
+const AWAKE_SRC = "data:video/mp4;base64,AAAAIGZ0eXBpc29tAAACAGlzb21pc28yYXZjMW1wNDEAAAMybW9vdgAAAGxtdmhkAAAAAAAAAAAAAAAAAAAD6AAAB9AAAQAAAQAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAlx0cmFrAAAAXHRraGQAAAADAAAAAAAAAAAAAAABAAAAAAAAB9AAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAAEAAAABAAAAAAAAkZWR0cwAAABxlbHN0AAAAAAAAAAEAAAfQAAAAAAABAAAAAAHUbWRpYQAAACBtZGhkAAAAAAAAAAAAAAAAAABAAAAAgABVxAAAAAAALWhkbHIAAAAAAAAAAHZpZGUAAAAAAAAAAAAAAABWaWRlb0hhbmRsZXIAAAABf21pbmYAAAAUdm1oZAAAAAEAAAAAAAAAAAAAACRkaW5mAAAAHGRyZWYAAAAAAAAAAQAAAAx1cmwgAAAAAQAAAT9zdGJsAAAAv3N0c2QAAAAAAAAAAQAAAK9hdmMxAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAEAAQABIAAAASAAAAAAAAAABFUxhdmM2MC4zMS4xMDIgbGlieDI2NAAAAAAAAAAAAAAAGP//AAAANWF2Y0MBZAAK/+EAGGdkAAqs2UQmwEQAAAMABAAAAwAIPEiWWAEABmjr48TITP34+AAAAAAQcGFzcAAAAAEAAAABAAAAFGJ0cnQAAAAAAAALqAAAC6gAAAAYc3R0cwAAAAAAAAABAAAAAgAAQAAAAAAUc3RzcwAAAAAAAAABAAAAAQAAABxzdHNjAAAAAAAAAAEAAAABAAAAAgAAAAEAAAAcc3RzegAAAAAAAAAAAAAAAgAAAtoAAAAQAAAAFHN0Y28AAAAAAAAAAQAAA2IAAABidWR0YQAAAFptZXRhAAAAAAAAACFoZGxyAAAAAAAAAABtZGlyYXBwbAAAAAAAAAAAAAAAAC1pbHN0AAAAJal0b28AAAAdZGF0YQAAAAEAAAAATGF2ZjYwLjE2LjEwMAAAAAhmcmVlAAAC8m1kYXQAAAKvBgX//6vcRem95tlIt5Ys2CDZI+7veDI2NCAtIGNvcmUgMTY0IHIzMTA4IDMxZTE5ZjkgLSBILjI2NC9NUEVHLTQgQVZDIGNvZGVjIC0gQ29weWxlZnQgMjAwMy0yMDIzIC0gaHR0cDovL3d3dy52aWRlb2xhbi5vcmcveDI2NC5odG1sIC0gb3B0aW9uczogY2FiYWM9MSByZWY9MyBkZWJsb2NrPTE6LTM6LTMgYW5hbHlzZT0weDM6MHgxMTMgbWU9aGV4IHN1Ym1lPTcgcHN5PTEgcHN5X3JkPTIuMDA6MC43MCBtaXhlZF9yZWY9MSBtZV9yYW5nZT0xNiBjaHJvbWFfbWU9MSB0cmVsbGlzPTEgOHg4ZGN0PTEgY3FtPTAgZGVhZHpvbmU9MjEsMTEgZmFzdF9wc2tpcD0xIGNocm9tYV9xcF9vZmZzZXQ9LTQgdGhyZWFkcz0yIGxvb2thaGVhZF90aHJlYWRzPTEgc2xpY2VkX3RocmVhZHM9MCBucj0wIGRlY2ltYXRlPTEgaW50ZXJsYWNlZD0wIGJsdXJheV9jb21wYXQ9MCBjb25zdHJhaW5lZF9pbnRyYT0wIGJmcmFtZXM9MyBiX3B5cmFtaWQ9MiBiX2FkYXB0PTEgYl9iaWFzPTAgZGlyZWN0PTEgd2VpZ2h0Yj0xIG9wZW5fZ29wPTAgd2VpZ2h0cD0yIGtleWludD0yNTAga2V5aW50X21pbj0xIHNjZW5lY3V0PTQwIGludHJhX3JlZnJlc2g9MCByY19sb29rYWhlYWQ9NDAgcmM9Y3JmIG1idHJlZT0xIGNyZj0yMy4wIHFjb21wPTAuNjAgcXBtaW49MCBxcG1heD02OSBxcHN0ZXA9NCBpcF9yYXRpbz0xLjQwIGFxPTE6MS4yMACAAAAAI2WIhAAXzn/+99S3zLLuByK2C6j3opyMge4MGVGifIG9e0bNAAAADEGaIWxBfOf+2qajQA==";
+let awakeVideo = null;
+async function stayAwake(on) {
+  if (on) {
+    if (navigator.wakeLock && window.isSecureContext) {
+      try { if (!wakeLock) wakeLock = await navigator.wakeLock.request("screen"); return; } catch {}
+    }
+    if (!awakeVideo) {
+      awakeVideo = document.createElement("video");
+      Object.assign(awakeVideo, { muted: true, loop: true, playsInline: true, src: AWAKE_SRC });
+      awakeVideo.setAttribute("playsinline", ""); awakeVideo.setAttribute("muted", "");
+      awakeVideo.style.cssText = "position:fixed;width:1px;height:1px;opacity:0.01;pointer-events:none;bottom:0;left:0";
+      document.body.appendChild(awakeVideo);
+    }
+    awakeVideo.play().catch(() => {});
+  } else {
+    if (wakeLock) { try { await wakeLock.release(); } catch {} wakeLock = null; }
+    if (awakeVideo) awakeVideo.pause();
+  }
 }
 
 let uploadId = 0, wakeLock = null;
@@ -204,19 +258,30 @@ function redrawUploads() {
 }
 
 async function pump() {
-  if (!wakeLock && navigator.wakeLock) { try { wakeLock = await navigator.wakeLock.request("screen"); } catch {} }
+  stayAwake(true);
   while (active < 2) {
     const u = S.uploads.find((x) => x.state === "wait");
     if (!u) break;
     active++;
     u.state = "up";
-    send(u).then((state) => { u.state = state; }).catch(() => { u.state = "error"; }).finally(() => {
+    sendWithRetry(u).then((state) => { u.state = state; }).catch(() => { u.state = "error"; }).finally(() => {
       active--; redrawUploads();
       if (!S.uploads.some((x) => x.state === "wait" || x.state === "up")) finished();
       else pump();
     });
   }
   redrawUploads();
+}
+
+// Si se corta la conexión (la Mac despertando del reposo, el WiFi), se reintenta solo.
+async function sendWithRetry(u) {
+  for (let attempt = 0; ; attempt++) {
+    try { return await send(u); } catch (e) {
+      if (attempt >= 5) throw e;
+      u.sent = 0; redrawUploads();
+      await new Promise((r) => setTimeout(r, 2000 * (attempt + 1)));
+    }
+  }
 }
 
 function send(u) {
@@ -236,7 +301,7 @@ function send(u) {
 }
 
 async function finished() {
-  if (wakeLock) { try { await wakeLock.release(); } catch {} wakeLock = null; }
+  stayAwake(false);
   // Las fotos nuevas tardan unos segundos en prepararse en la Mac.
   for (let i = 0; i < 6; i++) {
     await new Promise((r) => setTimeout(r, 2500));
@@ -389,7 +454,7 @@ const OPTS = {
   idle_seconds: [[10, "10 s"], [15, "15 s"], [30, "30 s"], [60, "1 min"]],
   language: [["es", "Español"], ["en", "English"]],
   theme: [["light", "Claro"], ["dark", "Oscuro"], ["auto", "Automático"]],
-  night: [["never", "Nunca"], ["schedule", "Por horario"], ["light", "Por la luz"]],
+  night: [["never", "Nunca"], ["schedule", "Por horario"]],
   night_hours: [["22-7", "22–7"], ["23-7", "23–7"], ["0-6", "0–6"]],
   night_style: [["off", "Apagada"], ["window", "Reloj ventana"], ["classic", "Reloj clásico"]],
   night_color: [["white", "Blanco"], ["blue", "Azul"], ["red", "Rojo"]],
@@ -425,8 +490,12 @@ function renderSettings() {
     <div class="card">
       ${segRow("language", "Idioma")}
       ${segRow("theme", "Apariencia")}
+      ${switchRow("auto_brightness", "Brillo automático")}
+      ${s.auto_brightness && !i.light_sensor ? `<div class="row"><span class="note">${t("Esta Mac no tiene sensor de luz ni cámara.")}</span></div>` : ""}
+    </div>
+    <div class="section">${t("Noche")}</div>
+    <div class="card">
       ${segRow("night", "Modo noche")}
-      ${s.night === "light" && !i.light_sensor ? `<div class="row"><span class="note">${t("Esta Mac no tiene sensor de luz.")}</span></div>` : ""}
       ${segRow("night_hours", "Horario", s.night === "schedule")}
       ${segRow("night_style", "De noche", nightOn)}
       ${segRow("night_color", "Color del reloj", nightOn && s.night_style === "classic")}
@@ -546,12 +615,20 @@ function ask(title, value, okLabel) {
 window.addEventListener("focus", () => {
   if (S.picking === "open") {
     S.picking = "wait";
-    if (S.tab === "upload") render();
-    setTimeout(() => { if (S.picking === "wait") { S.picking = null; if (S.tab === "upload") render(); } }, 90000);
+    setTimeout(() => { if (S.picking === "wait") { S.picking = null; stayAwake(false); if (S.tab === "upload") render(); } }, 15 * 60000);
   }
 });
 window.addEventListener("resize", () => document.querySelectorAll(".seg").forEach((seg) => placePill(seg, true)));
 document.addEventListener("visibilitychange", () => {
-  if (!document.hidden && S.info) refresh().then(() => { if (!S.selecting) render(); }).catch(() => {});
+  if (!document.hidden && S.info) reconnect();
 });
+// Al volver a la página (o si la Mac estaba en reposo), reintenta unas veces hasta que conteste.
+async function reconnect() {
+  for (let i = 0; i < 12; i++) {
+    try { await refresh(); if (!S.selecting) render(); return; } catch (e) {
+      if (e && e.message === "sin emparejar") return;
+      await new Promise((r) => setTimeout(r, 2500));
+    }
+  }
+}
 start();

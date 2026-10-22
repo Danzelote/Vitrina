@@ -50,7 +50,8 @@ SETTINGS = {
     "idle_seconds": (10, 15, 30, 60),
     "language": ("es", "en"),
     "theme": ("light", "dark", "auto"),
-    "night": ("never", "schedule", "light"),
+    "night": ("never", "schedule"),
+    "auto_brightness": (True, False),
     "night_hours": ("22-7", "23-7", "0-6"),
     "night_style": ("off", "window", "classic"),
     "night_color": ("white", "blue", "red"),
@@ -271,7 +272,11 @@ class Handler(BaseHTTPRequestHandler):
             from .. import config as C2
             d = diagnostics()
             d.update(version=__version__, ligero=C2.LIGHT, sensor_en_uso=type(self.v.app.sensor).__name__,
-                     sensor_disponible=self.v.app.sensor.available)
+                     sensor_disponible=self.v.app.sensor.available,
+                     luz=getattr(self.v.app.sensor, "level", None),
+                     exposicion_manual=getattr(self.v.app.sensor, "manual_exposure", None),
+                     brillo_minimo=self.v.app.settings.min_brightness,
+                     brillo_maximo_raw=self.v.app.backlight.max)
             return self.send(200, json.dumps(d, ensure_ascii=False, indent=2), "application/json; charset=utf-8")
         if path == "/api/photos":
             return self.photos()

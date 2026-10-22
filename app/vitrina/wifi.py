@@ -120,18 +120,20 @@ class Wifi:
 
     # -- conectar ------------------------------------------------------------------
 
-    def connect(self, ssid, password=""):
+    def connect(self, ssid, password="", hidden=False):
         if not self.available or self.connecting:
             return
         self.connecting = ssid
         self.message = ""
-        self._bg(self._connect, ssid, password)
+        self._bg(self._connect, ssid, password, hidden)
 
-    def _connect(self, ssid, password):
+    def _connect(self, ssid, password, hidden=False):
         try:
             args = ["device", "wifi", "connect", ssid]
             if password:
                 args += ["password", password]
+            if hidden:
+                args += ["hidden", "yes"]
             code, out = _run(args, 60)
             if code == 0:
                 self.message = "ok"

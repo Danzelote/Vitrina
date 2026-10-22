@@ -76,10 +76,20 @@ EN = {
     "Se apaga poco a poco": "Dims slowly",
     "Con el sensor de luz de la Mac": "Uses the Mac's light sensor",
     "Con la cámara: el foquito verde parpadea": "Uses the camera: its green light blinks",
-    "Cámara: luz {n} de 255 · {s}": "Camera: light {n} of 255 · {s}",
-    "oscuro": "dark",
-    "claro": "bright",
-    "Por la luz: esta computadora no tiene sensor": "This computer has no light sensor",
+    "Cámara: luz {n} de 255": "Camera: light {n} of 255",
+    "Esta computadora no tiene sensor ni cámara": "This computer has no light sensor or camera",
+    "Brillo automático": "Auto-brightness",
+    "Brillo mínimo": "Minimum brightness",
+    "Calibrado": "Calibrated",
+    "Para que nunca se vaya a negro": "So the screen never goes black",
+    "Calibrar": "Calibrate",
+    "Calibrar brillo mínimo": "Calibrate minimum brightness",
+    "La pantalla se irá oscureciendo poco a poco.": "The screen will slowly get darker.",
+    "Haz clic o presiona una tecla en cuanto deje de verse.": "Click or press a key as soon as you can no longer see it.",
+    "Esc para cancelar": "Esc to cancel",
+    "Brillo mínimo calibrado": "Minimum brightness calibrated",
+    "Noche": "Night",
+    "Reloj o pantalla apagada a cierta hora": "Clock or screen off at set hours",
     "Nunca": "Never",
     "Por horario": "Schedule",
     "Por la luz": "Room light",
@@ -127,6 +137,15 @@ EN = {
     "Contraseña incorrecta": "Wrong password",
     "No se pudo conectar": "Couldn't connect",
     "Configurar WiFi": "Set up Wi-Fi",
+    "Escanear código": "Scan code",
+    "Muestra el código QR de tu WiFi": "Show your Wi-Fi QR code",
+    "Acerca el celular a la cámara (unos 20–30 cm).": "Hold your phone close to the camera (about 20–30 cm).",
+    "No se pudo abrir la cámara": "Couldn't open the camera",
+    "Abriendo la cámara…": "Opening the camera…",
+    "Ese código no es de una red WiFi": "That code isn't a Wi-Fi network",
+    "iPhone: app Contraseñas → Wi-Fi → tu red → Mostrar código QR de la red": "iPhone: Passwords app → Wi-Fi → your network → Show Network QR Code",
+    "Android: Ajustes → Wi-Fi → tu red → Compartir": "Android: Settings → Wi-Fi → your network → Share",
+    "Conectando a {ssid}…": "Connecting to {ssid}…",
     "Apagar": "Shut down",
     "Reiniciar": "Restart",
     "Apagar…": "Shut down…",
@@ -148,9 +167,14 @@ def lang():
     return _lang[0]
 
 
-def tr(s, **kw):
-    t = EN.get(s, s) if _lang[0] == "en" else s
-    return t.format(**kw) if kw else t
+def tr(_text, **kw):
+    t = EN.get(_text, _text) if _lang[0] == "en" else _text
+    if not kw:
+        return t
+    try:
+        return t.format(**kw)
+    except (KeyError, IndexError, ValueError):     # un texto mal formado nunca debe cerrar la app
+        return t
 
 
 def photos(n):
