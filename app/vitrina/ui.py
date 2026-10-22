@@ -31,6 +31,7 @@ from . import qrscan as QR  # noqa: E402
 from . import splash as SPL  # noqa: E402
 from . import installer as INST  # noqa: E402
 from . import ambient as AMB  # noqa: E402
+from . import watchdog as WATCH  # noqa: E402
 from . import config as C  # noqa: E402
 from . import levels as LV  # noqa: E402
 from . import video as VID  # noqa: E402
@@ -3167,7 +3168,10 @@ class App:
 
     def run(self):
         clock = pygame.time.Clock()
+        self.frame_at = time.monotonic()
+        WATCH.start(lambda: self.frame_at)
         while self.running:
+            self.frame_at = time.monotonic()
             self.step()
             if self.sleeping:
                 fps = 5                 # apagada: casi sin gastar

@@ -278,7 +278,8 @@ class Handler(BaseHTTPRequestHandler):
                      exposicion_manual=getattr(self.v.app.sensor, "manual_exposure", None),
                      brillo_minimo=self.v.app.settings.min_brightness,
                      brillo_maximo_raw=self.v.app.backlight.max,
-                     camara_qr=QRSCAN.LAST_LOG)
+                     camara_qr=QRSCAN.LAST_LOG,
+                     trabada=__import__("vitrina.watchdog", fromlist=["REPORTS"]).REPORTS)
             return self.send(200, json.dumps(d, ensure_ascii=False, indent=2), "application/json; charset=utf-8")
         if path == "/api/photos":
             return self.photos()
