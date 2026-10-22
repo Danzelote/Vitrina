@@ -20,6 +20,7 @@ def main():
                     help="usa N fotos de prueba (140 si no dices cuántas)")
     ap.add_argument("--fullscreen", action="store_true", help="pantalla completa")
     ap.add_argument("--invert-zoom", action="store_true", help="invierte la dirección del zoom con la rueda")
+    ap.add_argument("--debug-input", action="store_true", help="muestra en la terminal los eventos del trackpad")
     args = ap.parse_args()
 
     folder = args.folder
@@ -33,7 +34,8 @@ def main():
     processor.start()
 
     from vitrina.ui import App
-    App(items, processor, fullscreen=args.fullscreen, invert_zoom=args.invert_zoom).run()
+    App(items, processor, fullscreen=args.fullscreen, invert_zoom=args.invert_zoom,
+        debug_input=args.debug_input).run()
 
 
 if __name__ == "__main__":

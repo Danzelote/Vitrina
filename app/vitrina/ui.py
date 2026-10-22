@@ -29,6 +29,7 @@ RANK = {PHOTOS: 0, MONTHS: 1, COLLS: 1, YEARS: 2}
 LEVEL_TIME = 0.75
 SWIPE_TIME = 0.5
 SWIPE_EASE = cubic_bezier(0.32, 0.72, 0.0, 1.0)   # suave al llegar, como en iOS
+RELEASE_PAUSE = 0.45   # sin aviso de dedos: pausa que se toma como "soltado"
 SWIPE_UNIT = 40        # puntos que avanza la foto por cada unidad de desplazamiento del trackpad
 GESTURE_GAP = 0.25     # segundos sin eventos de rueda = gesto nuevo
 BAR_H = 72
@@ -39,7 +40,9 @@ def inside(rect, x, y):
 
 
 class App:
-    def __init__(self, items, processor=None, fullscreen=False, invert_zoom=False, size=(1280, 800)):
+    def __init__(self, items, processor=None, fullscreen=False, invert_zoom=False, size=(1280, 800),
+                 debug_input=False):
+        self.debug_input = debug_input
         pygame.display.init()
         pygame.font.init()
         self.win = Window("Vitrina", size=size, resizable=True, allow_high_dpi=True)
@@ -281,11 +284,11 @@ class App:
             self.animate_swipe(j, d, t, 0.0, 0.25 + 0.3 * t, now)
 
     def page_width(self, a=None, b=None):
-        """Distancia entre dos fotos en el visor. Suficiente para que la que se va
-        salga completa de la pantalla, y la nueva asome desde el primer momento."""
-        widths = [self.viewer_rect(i)[2] for i in (a, b) if i is not None]
-        w = max(widths) if widths else self.vw * 0.6
-        return self.vw / 2 + w / 2 + 40
+        """Distancia entre dos fotos en el visor: juntas, con un espacio corto.
+        El desvanecido evita que la que se va se quede asomando."""
+        wa = self.viewer_rect(a)[2] if a is not None else self.vw * 0.6
+        wb = self.viewer_rect(b)[2] if b is not None else wa
+        return (wa + wb) / 2 + 60
 
     def current_viewer_index(self):
         if self.swipe and self.swipe["to"] >= 1.0:
@@ -451,7 +454,21 @@ class App:
 
     # ------------------------------------------------------------------ eventos
 
+    def debug_event(self, e):
+        names = {pygame.MOUSEWHEEL: "rueda", pygame.FINGERDOWN: "DEDO ABAJO", pygame.FINGERUP: "DEDO ARRIBA",
+                 pygame.FINGERMOTION: "dedo se mueve", pygame.MOUSEBUTTONDOWN: "clic abajo",
+                 pygame.MOUSEBUTTONUP: "clic arriba"}
+        if e.type in names:
+            extra = ""
+            if e.type == pygame.MOUSEWHEEL:
+                extra = f" x={getattr(e, 'precise_x', e.x):.2f} y={getattr(e, 'precise_y', e.y):.2f}"
+            elif e.type in (pygame.FINGERDOWN, pygame.FINGERUP, pygame.FINGERMOTION):
+                extra = f" dedo={e.finger_id} x={e.x:.2f} y={e.y:.2f}"
+            print(f"[{time.monotonic():.2f}] {names[e.type]}{extra}", flush=True)
+
     def handle(self, e, now):
+        if self.debug_input:
+            self.debug_event(e)
         if e.type == pygame.QUIT:
             self.running = False
         elif e.type == pygame.KEYDOWN:
@@ -634,7 +651,7 @@ class App:
             if dt > 0:
                 self.drag_vel = 0.7 * self.drag_vel + 0.3 * (self.drag_vis - prev) / dt
             # Sin reporte de dedos (por ejemplo en Linux) se toma como soltado tras una pausa.
-            if not self.touch_seen and now - self.wheel_last > 0.35:
+            if not self.touch_seen and now - self.wheel_last > RELEASE_PAUSE:
                 self.release_drag(now)
         if self.rubber and self.rubber.done(now):
             self.rubber = None
@@ -806,11 +823,12 @@ class App:
                 self.draw_tile(self.items[a], x - p * self.page_width(a), y, w, h, 1.0, radius, bg, True)
                 return
         page = self.page_width(a, b)
-        for i, off in ((a, -d * t * page), (b, d * (1 - t) * page)):
+        # La que sale se desvanece y la que entra aparece conforme avanzan.
+        for i, off, alpha in ((a, -d * t * page, 1.0 - t), (b, d * (1 - t) * page, t)):
             x, y, w, h = self.viewer_rect(i)
-            if x + off + w < 0 or x + off > self.vw:
+            if alpha <= 0.01 or x + off + w < 0 or x + off > self.vw:
                 continue
-            self.draw_tile(self.items[i], x + off, y, w, h, 1.0, radius, bg, True)
+            self.draw_tile(self.items[i], x + off, y, w, h, alpha, radius, bg, True)
 
     def draw_level(self, lvl, now, alpha, view, bg):
         g, items = self.gfx, self.items
