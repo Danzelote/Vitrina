@@ -36,8 +36,11 @@ _SW_SIZE, _SW_FORMAT, _SW_STRIDE, _SW_POINTER = 17, 18, 19, 20
 FADE_IN_FRAME = 0.25   # segundos en que el primer cuadro aparece sobre la portada
 AUDIO_IN = 0.3         # fundido de entrada al empezar (lo hace mpv, justo cuando suena)
 AUDIO_RESUME = 0.25    # al reanudar después de una pausa
-AUDIO_OUT = 0.6        # fundido de salida al pausar, deslizar o cerrar
-AUDIO_LEAD = 0.2       # el fundido empieza este tanto después de lo que ya suena (lo del búfer)
+AUDIO_OUT = 0.8        # fundido de salida al pausar, deslizar o cerrar
+# Las bocinas o audífonos (sobre todo Bluetooth, como los AirPods) pueden ir
+# atrasados respecto a lo que mpv cree que suena. Por eso el video sigue vivo
+# (en silencio) un buen rato después del fundido antes de cerrarse.
+AUDIO_HOLD = 1.5
 # Los fundidos de salida y de reanudar también los hace mpv, con un filtro de
 # volumen que depende del tiempo del propio audio (t). Así no importa cuánto audio
 # tenga guardado el sistema por adelantado: el fundido cae justo donde debe, y
@@ -70,7 +73,7 @@ class Player:
         self.w, self.h = max(2, int(size[0]) // 2 * 2), max(2, int(size[1]) // 2 * 2)
         self.audio = audio
         self.loop = loop
-        self.volume = 100.0 if audio else 0.0
+        self.volume = 100.0 if audio else 0.0   # respaldo: volumen general (amplitud 0–100)
         self._fade_req = None            # ("out" | "in" | "flat", duración) para el hilo
         self.fade_end = None             # tiempo del audio en que termina el fundido de salida
         self.fade_asked = None           # cuándo se pidió (respaldo por si no hay reloj de audio)
@@ -142,11 +145,20 @@ class Player:
             params = {id(self._front): self._params(self._front), id(self._back): self._params(self._back)}
             self.mpv.play(self.path)
             last_info = 0.0
-            applied_pause = self.want_pause
+            applied_pause, applied_volume = self.want_pause, 100.0
             while not self._stop.is_set():
                 if self._fade_req is not None:
                     self._apply_fade(*self._fade_req)
                     self._fade_req = None
+                if self.audio:
+                    # Respaldo del fundido con el volumen general (mpv lo aplica al cubo).
+                    vol = round(100.0 * (max(0.0, self.volume) / 100.0) ** (1 / 3), 1)
+                    if vol != applied_volume:
+                        try:
+                            self.mpv.volume = vol
+                        except Exception:
+                            pass
+                        applied_volume = vol
                 if self.desired_pause != applied_pause:
                     self.mpv.pause = self.desired_pause
                     applied_pause = self.desired_pause
@@ -192,7 +204,7 @@ class Player:
             heard = None
         base = heard if heard is not None else (self.mpv.time_pos or 0.0)
         if kind == "out":
-            st = base + AUDIO_LEAD
+            st = base               # empieza ya (lo que estaba en el búfer baja de un jalón)
             expr = f"min(1,max(0,1-(t-{st:.3f})/{duration:.3f}))"
             self.fade_end = st + duration
         elif kind == "in":
@@ -286,13 +298,21 @@ class Player:
         cuando ya se pidió cerrar y terminó el fundido de salida."""
         now = time.monotonic() if now is None else now
         if self.audio:
+            # Volumen general de respaldo: sigue al fundido pedido.
+            fading_out = self.closing or self.pause_when_silent or (self.paused and self.fade_end is not None)
+            goal = 0.0 if fading_out else 100.0
+            speed = 100.0 / (AUDIO_OUT if fading_out else AUDIO_RESUME)
+            if self.volume < goal:
+                self.volume = min(goal, self.volume + speed * dt)
+            elif self.volume > goal:
+                self.volume = max(goal, self.volume - speed * dt)
             # "Ya se escuchó todo el fundido": lo que suena pasó su final. Si no hay
             # reloj de audio (o se atora), un respaldo por tiempo.
             drained = False
             if self.fade_asked is not None and self._fade_req is None:
                 if self.fade_end is not None and self.audio_pos is not None:
-                    drained = self.audio_pos >= self.fade_end + 0.05
-                drained = drained or now - self.fade_asked > AUDIO_LEAD + AUDIO_OUT + 1.2
+                    drained = self.audio_pos >= self.fade_end + AUDIO_HOLD
+                drained = drained or now - self.fade_asked > AUDIO_OUT + AUDIO_HOLD + 0.8
             if self.pause_when_silent and drained:
                 self.desired_pause = True
                 self.paused = True
