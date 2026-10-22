@@ -29,8 +29,8 @@ RANK = {PHOTOS: 0, MONTHS: 1, COLLS: 1, YEARS: 2}
 LEVEL_TIME = 0.75
 SWIPE_TIME = 0.5
 SWIPE_EASE = cubic_bezier(0.32, 0.72, 0.0, 1.0)   # suave al llegar, como en iOS
-RELEASE_PAUSE = 0.45   # sin aviso de dedos: pausa que se toma como "soltado"
-SWIPE_UNIT = 40        # puntos que avanza la foto por cada unidad de desplazamiento del trackpad
+RELEASE_PAUSE = 0.7    # sin aviso de dedos: pausa que se toma como "soltado"
+SWIPE_UNIT = 60        # puntos que avanza la foto por cada unidad de desplazamiento del trackpad
 GESTURE_GAP = 0.25     # segundos sin eventos de rueda = gesto nuevo
 BAR_H = 72
 

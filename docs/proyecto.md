@@ -214,6 +214,7 @@ vitrina/
 ## 8. Riesgos conocidos
 
 - **WiFi Broadcom:** necesita drivers aparte. Irán preinstalados.
+- **Levantar los dedos del trackpad:** SDL no avisa cuándo se levantan los dedos (ni en macOS ni en Linux), solo manda movimientos. En la imagen de Linux se leerá el trackpad directamente (`/dev/input`, que sí reporta cuántos dedos hay) para que el arrastre del visor se suelte justo al levantar los dedos. Mientras tanto se usa una pausa como señal.
 - **Pantalla en negro al arrancar en Macs con NVIDIA:** el menú de arranque queda invisible. La imagen debe arrancar sola, sin menú.
 - **Memoria:** con 2 GB todo debe ser ligero. Compilar o abrir un navegador basta para agotarla.
 - **Teclado:** la distribución no siempre se detecta bien. Mejor que nadie tenga que escribir.
