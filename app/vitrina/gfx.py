@@ -4,6 +4,7 @@ Todo se dibuja como texturas escaladas: es lo más barato para la gráfica y
 funciona también con el renderizador por software de SDL si no hay aceleración.
 """
 
+import math
 import threading
 import time
 from collections import OrderedDict
@@ -92,8 +93,11 @@ class Gfx:
         self.thumbs = LRU(C.THUMB_CACHE)
         self.screens = LRU(C.SCREEN_CACHE)
         self.backdrops = LRU(8)
-        self.texts = LRU(64)
-        self.pills = LRU(32)
+        self.texts = LRU(200)
+        self.pills = LRU(160)
+        self.anims = {}          # estado animado de controles (selectores, interruptores)
+        self.now = time.monotonic()
+        self.dt = 1 / 60
         self.fonts = {}
         self.loads_left = 0
         self.loader = Loader()
@@ -116,10 +120,13 @@ class Gfx:
         pygame.draw.circle(big, (255, 255, 255, 0), (256, 256), 256)
         return pygame.transform.smoothscale(big, (64, 64))
 
-    def begin_frame(self, budget_ms=6.0):
+    def begin_frame(self, budget_ms=6.0, now=None):
         """Sube a la gráfica las imágenes que el hilo ya decodificó, con un
         límite de tiempo por cuadro para no frenar la animación."""
         t0 = time.monotonic()
+        now = t0 if now is None else now
+        self.dt = min(max(now - self.now, 0.0), 0.1)
+        self.now = now
         while (time.monotonic() - t0) * 1000 < budget_ms:
             batch = self.loader.take(1)
             if not batch:
@@ -224,29 +231,40 @@ class Gfx:
     def text(self, s, size, color=None, bold=False):
         """Texto renderizado a la resolución real; mide en puntos con tsize()."""
         color = color or T.text
-        key = (s, size, color, bold, self.dpi)
+        key = (s, size, bold, self.dpi)
         tex = self.texts.get_item(key)
         if tex is None:
-            surf = self.font(round(size * self.dpi), bold).render(s, True, color)
+            # Se dibuja en blanco y se tiñe al usarlo: cambiar de color (por ejemplo
+            # al pasar de tema claro a oscuro) no obliga a dibujar el texto otra vez.
+            surf = self.font(round(size * self.dpi), bold).render(s, True, (255, 255, 255))
             tex = self._tex(surf)
             self.texts.put(key, tex)
+        tex.color = color[:3]
         return tex
 
     def tsize(self, tex):
         return tex.width / self.dpi, tex.height / self.dpi
 
-    def pill_shape(self, w, h, color=None):
-        color = color or T.pill
-        key = (int(w), int(h), color, self.dpi)
+    def shape(self, w, h, radius=None):
+        """Rectángulo redondeado blanco (se tiñe al dibujarlo). radius None = píldora."""
+        pw, ph = max(1, round(w * self.dpi)), max(1, round(h * self.dpi))
+        r = ph // 2 if radius is None else min(ph // 2, pw // 2, round(radius * self.dpi))
+        key = (pw, ph, r)
         tex = self.pills.get_item(key)
         if tex is None:
-            pw, ph = int(w * self.dpi), int(h * self.dpi)
             surf = pygame.Surface((pw * 2, ph * 2), pygame.SRCALPHA)
-            pygame.draw.rect(surf, color, surf.get_rect(), border_radius=ph)
-            surf = pygame.transform.smoothscale(surf, (pw, ph))
-            tex = self._tex(surf)
+            pygame.draw.rect(surf, (255, 255, 255), surf.get_rect(), border_radius=r * 2)
+            tex = self._tex(pygame.transform.smoothscale(surf, (pw, ph)))
             self.pills.put(key, tex)
         return tex
+
+    def fill_shape(self, x, y, w, h, color, alpha=1.0, radius=None):
+        if alpha <= 0.003 or w < 1 or h < 1:
+            return
+        tex = self.shape(w, h, radius)
+        tex.color = color[:3]
+        tex.alpha = int(255 * min(alpha, 1.0) * (color[3] / 255 if len(color) > 3 else 1))
+        tex.draw(dstrect=(x, y, w, h))
 
     def pill(self, label, cx, y, size=14, alpha=1.0, anchor="center", sublabel=None):
         """Una píldora con texto. `anchor` puede ser 'center' (cx es el centro)
@@ -261,12 +279,12 @@ class Gfx:
         w = w1 + (gap + w2 if t2 else 0) + pad * 2
         h = max(40, h1 + 16)
         x = cx - w / 2 if anchor == "center" else cx
-        bg = self.pill_shape(w, h)
-        bg.alpha = int(255 * alpha)
-        bg.draw(dstrect=(x, y, w, h))
+        self.fill_shape(x, y, w, h, T.pill, alpha)
+        t1 = self.text(label, size, T.text, bold=True)
         t1.alpha = int(255 * alpha)
         t1.draw(dstrect=(x + pad, y + (h - h1) / 2, w1, h1))
         if t2:
+            t2 = self.text(sublabel, size, T.text_dim)
             t2.alpha = int(255 * alpha)
             t2.draw(dstrect=(x + pad + w1 + gap, y + (h - h2) / 2, w2, h2))
         return (x, y, w, h)
@@ -283,11 +301,11 @@ class Gfx:
         """Texto blanco con una sombra suave, para leerse sobre cualquier foto."""
         if alpha <= 0.003:
             return 0, 0
-        sh = self.text(s, size, (0, 0, 0), bold)
-        t = self.text(s, size, (255, 255, 255), bold)
+        t = self.text(s, size, (0, 0, 0), bold)     # la misma textura, teñida
         w, h = self.tsize(t)
-        sh.alpha = int(90 * alpha)
-        sh.draw(dstrect=(x, y + max(1.0, size / 22), w, h))
+        t.alpha = int(90 * alpha)
+        t.draw(dstrect=(x, y + max(1.0, size / 22), w, h))
+        t.color = (255, 255, 255)
         t.alpha = int(255 * alpha)
         t.draw(dstrect=(x, y, w, h))
         return w, h
@@ -308,21 +326,7 @@ class Gfx:
 
     def round_rect(self, x, y, w, h, color, alpha=1.0, radius=None):
         """Rectángulo redondeado (por defecto, forma de píldora)."""
-        if alpha <= 0.003 or w < 1 or h < 1:
-            return
-        if radius is None:
-            tex = self.pill_shape(w, h, color)
-        else:
-            key = ("rr", int(w), int(h), int(radius), color, self.dpi)
-            tex = self.pills.get_item(key)
-            if tex is None:
-                pw, ph = int(w * self.dpi), int(h * self.dpi)
-                surf = pygame.Surface((pw * 2, ph * 2), pygame.SRCALPHA)
-                pygame.draw.rect(surf, color, surf.get_rect(), border_radius=int(radius * self.dpi * 2))
-                tex = self._tex(pygame.transform.smoothscale(surf, (pw, ph)))
-                self.pills.put(key, tex)
-        tex.alpha = int(255 * min(alpha, 1.0))
-        tex.draw(dstrect=(x, y, w, h))
+        self.fill_shape(x, y, w, h, color, alpha, radius)
 
     def button(self, label, x, y, h=44, alpha=1.0, active=False, bold=True, size=14, icon=None, pad=18):
         """Botón tipo píldora. Devuelve su rectángulo (x, y, w, h)."""
@@ -342,30 +346,69 @@ class Gfx:
         t.draw(dstrect=(tx, y + (h - th) / 2, tw, th))
         return (x, y, w, h)
 
+    def _approach(self, cur, target, tau=0.075):
+        """Se acerca a `target` suave (como un resorte sin rebote)."""
+        return cur + (target - cur) * (1 - math.exp(-self.dt / tau))
+
     def segmented(self, options, active_key, x, y, h=44, alpha=1.0, disabled=()):
         """Selector segmentado. options = [(clave, etiqueta)]. Devuelve
-        [(clave, rect)] y el ancho total."""
+        [(clave, rect)] y el ancho total. La pastilla blanca se desliza de una
+        opción a otra y los textos cambian de color conforme pasa encima."""
         size, pad, inset = 13, 14, 3
-        texts = [(k, self.text(lbl, size, T.active_fg if k == active_key else T.text, True)) for k, lbl in options]
-        widths = [self.tsize(t)[0] + pad * 2 for _, t in texts]
+        labels = [(k, lbl, self.tsize(self.text(lbl, size, T.text, True))) for k, lbl in options]
+        widths = [tw + pad * 2 for _, _, (tw, _) in labels]
         total = sum(widths) + inset * 2
         self.round_rect(x, y, total, h, T.button, alpha)
-        out = []
-        cx = x + inset
-        for (k, t), w in zip(texts, widths):
-            a = alpha * (0.4 if k in disabled else 1.0)
-            if k == active_key:
-                self.round_rect(cx, y + inset, w, h - inset * 2, T.active_bg, alpha)
-            tw, th = self.tsize(t)
-            t.alpha = int(255 * min(a, 1.0))
-            t.draw(dstrect=(cx + pad, y + (h - th) / 2, tw, th))
-            out.append((k, (cx, y, w, h)))
+        offs, cx = [], inset
+        for w in widths:
+            offs.append(cx)
             cx += w
+        # Posición animada de la pastilla, relativa al selector.
+        key = ("seg",) + tuple(k for k, _ in options)
+        target = next(((o, w) for (k, _, _), o, w in zip(labels, offs, widths) if k == active_key), None)
+        st = self.anims.get(key)
+        if target is None:
+            self.anims.pop(key, None)
+            st = None
+        elif st is None or self.now - st[2] > 0.5:   # recién aparece: sin animar
+            st = [target[0], target[1], self.now]
+        else:
+            st = [self._approach(st[0], target[0]), self._approach(st[1], target[1]), self.now]
+        if st is not None:
+            self.anims[key] = st
+            self.round_rect(x + st[0], y + inset, st[1], h - inset * 2, T.active_bg, alpha)
+        out = []
+        p0, p1 = (x + st[0], x + st[0] + st[1]) if st is not None else (0.0, 0.0)
+        for (k, lbl, (tw, th)), o, w in zip(labels, offs, widths):
+            a = alpha * (0.4 if k in disabled else 1.0)
+            tx, ty = x + o + pad, y + (h - th) / 2
+            # La parte del texto que queda sobre la pastilla va en su color; el resto, normal.
+            cuts = sorted({tx, tx + tw, min(max(p0, tx), tx + tw), min(max(p1, tx), tx + tw)})
+            for c0, c1 in zip(cuts, cuts[1:]):
+                if c1 - c0 < 0.01:
+                    continue
+                on_pill = p0 <= (c0 + c1) / 2 <= p1
+                t = self.text(lbl, size, T.active_fg if on_pill else T.text, True)
+                t.alpha = int(255 * min(a, 1.0))
+                if c0 == tx and c1 == tx + tw:
+                    t.draw(dstrect=(tx, ty, tw, th))
+                else:
+                    sx0, sx1 = (c0 - tx) / tw * t.width, (c1 - tx) / tw * t.width
+                    t.draw(srcrect=(sx0, 0, sx1 - sx0, t.height), dstrect=(c0, ty, c1 - c0, th))
+            out.append((k, (x + o, y, w, h)))
         return out, total
 
-    def toggle(self, on, x, y, alpha=1.0):
+    def toggle(self, on, x, y, alpha=1.0, key=None):
+        """Interruptor; con `key` la bolita se desliza y el color cambia suave."""
         w, h = 52, 32
-        self.round_rect(x, y, w, h, (36, 138, 61, 255) if on else T.toggle_off, alpha)
-        kx = x + (23 if on else 3)
-        self.round_rect(kx, y + 3, 26, 26, (255, 255, 255, 255), alpha)
+        v = 1.0 if on else 0.0
+        if key is not None:
+            st = self.anims.get(("tog", key))
+            if st is not None and self.now - st[1] <= 0.5:
+                v = self._approach(st[0], v, 0.07)
+            self.anims[("tog", key)] = (v, self.now)
+        green, off = (36, 138, 61, 255), T.toggle_off
+        color = tuple(round(off[i] + (green[i] - off[i]) * v) for i in range(4))
+        self.round_rect(x, y, w, h, color, alpha)
+        self.round_rect(x + 3 + 20 * v, y + 3, 26, 26, (255, 255, 255, 255), alpha)
         return (x, y, w, h)

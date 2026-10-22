@@ -26,7 +26,8 @@ from . import levels as LV  # noqa: E402
 from . import video as VID  # noqa: E402
 from . import theme as TH  # noqa: E402
 from .theme import T  # noqa: E402
-from .easing import EASE, Tween, cubic_bezier, lerp  # noqa: E402
+from .easing import EASE, EASE_IN_OUT, Tween, cubic_bezier, lerp  # noqa: E402
+from pygame._sdl2.video import Texture  # noqa: E402
 from .gfx import Gfx  # noqa: E402
 from .settings import Settings  # noqa: E402
 
@@ -40,6 +41,9 @@ SWIPE_TRIGGER = 1.0    # desplazamiento del trackpad que cuenta como gesto
 RELEASE_PAUSE = 0.7    # sin aviso de dedos: pausa que se toma como "soltado"
 SWIPE_UNIT = 60        # puntos que avanza la foto por cada unidad de desplazamiento del trackpad
 GESTURE_GAP = 0.25     # segundos sin eventos de rueda = gesto nuevo
+SETTINGS_IN = 0.38     # Ajustes aparece...
+SETTINGS_OUT = 0.24    # ...y se va un poco más rápido
+THEME_TIME = 0.7       # cambio gradual entre tema claro y oscuro
 BAR_H = 72
 
 
@@ -124,6 +128,11 @@ class App:
         self.ignore_swipe_until_gap = False
         self.swipe_acc = 0.0
         self.settings_tab = "show"
+        self.settings_tw = None     # animación al abrir y cerrar Ajustes
+        self.settings_amt = 0.0
+        self.offscreen_tex = {}     # texturas para el desenfoque del fondo y el panel
+        self.theme_target = T.name
+        self.theme_anim = None      # (paleta de origen, paleta destino, inicio)
         # Ken Burns: movimiento de cada foto en pantalla (índice -> (inicio, Motion)).
         self.kb = {}
         # "Un día como hoy"
@@ -283,6 +292,7 @@ class App:
         for p in self.dying:
             p.close()
         self.dying = []
+        VID.wait_all()
 
     # ------------------------------------------------------------------ modos
 
@@ -712,7 +722,7 @@ class App:
             self.running = False
         elif e.key == pygame.K_ESCAPE:
             if self.settings_open:
-                self.close_settings()
+                self.close_settings(now)
             elif self.mode == VIEWER:
                 self.close_viewer(now)
             elif self.mode == GRID and self.lvl != PHOTOS:
@@ -817,7 +827,7 @@ class App:
                 fn(now)
                 return
         if self.settings_open:
-            self.close_settings()
+            self.close_settings(now)
             return
         if self.mode == FRAME:
             self.enter_grid(now)
@@ -834,9 +844,11 @@ class App:
         self.apply_theme()
 
     def apply_theme(self):
+        """Cambia de tema con un fundido gradual de todos los colores."""
         pal = TH.resolve(self.settings.theme)
-        if T.name != pal.name:
-            T.set(pal)
+        if pal.name != self.theme_target:
+            self.theme_target = pal.name
+            self.theme_anim = (TH.Palette(**dict(T.__dict__)), pal, self.last_t)
 
     def toggle_video(self, now):
         p = self.player_for("view", self.morph_i)
@@ -848,8 +860,15 @@ class App:
             p.set_paused(p.is_playing)
         self.last_move = now
 
-    def close_settings(self):
+    def open_settings(self, now=None):
+        now = time.monotonic() if now is None else now
+        self.settings_open = True
+        self.settings_tw = Tween((self.settings_amt,), (1.0,), SETTINGS_IN, EASE, now)
+
+    def close_settings(self, now=None):
+        now = time.monotonic() if now is None else now
         self.settings_open = False
+        self.settings_tw = Tween((self.settings_amt,), (0.0,), SETTINGS_OUT, EASE, now)
         self.settings.save()
 
     # ------------------------------------------------------------------ actualización
@@ -860,6 +879,16 @@ class App:
         if now - getattr(self, "_theme_check", 0.0) > 30:   # el automático cambia con la hora
             self._theme_check = now
             self.apply_theme()
+        if self.theme_anim:
+            src, dst, t0 = self.theme_anim
+            p = min(1.0, (now - t0) / THEME_TIME)
+            T.set(TH.blend(src, dst, EASE_IN_OUT(p)) if p < 1 else dst)
+            if p >= 1:
+                self.theme_anim = None
+        if self.settings_tw:
+            self.settings_amt = self.settings_tw.value(now)[0]
+            if self.settings_tw.done(now):
+                self.settings_tw = None
         if self.cam_tween:
             tx, ty, s = self.cam_tween.value(now)
             self.cx, self.cy, self.s = cam.from_screen(tx, ty, s, self.vw, self.vh)
@@ -1017,9 +1046,80 @@ class App:
             self.ren.draw_color = (0, 0, 0, 255)
             self.ren.clear()
             return
-        g.begin_frame()
+        g.begin_frame(now=now)
         self.hits = []
         self.ui_rects = []
+        amt = self.settings_amt if self.items else 0.0
+        if amt > 0.001:
+            # Ajustes: la escena se dibuja aparte para desenfocarla detrás del panel.
+            scene = self.offscreen("scene", pygame.BLENDMODE_NONE)
+            self._blur_n = getattr(self, "_blur_n", 0) + 1
+            fresh = amt < 0.999 or self._blur_n % 3 == 0 or "blur4" not in self.offscreen_tex
+            if fresh:   # ya abierto, el fondo desenfocado se renueva uno de cada 3 cuadros
+                self.ren.target = scene
+                self.ren.logical_size = (self.vw, self.vh)
+                self.draw_scene(now)
+                self.ren.target = None
+                self.hits, self.ui_rects = [], []      # con Ajustes abierto, solo cuenta el panel
+            scene.alpha = 255
+            scene.draw(dstrect=(0, 0, self.vw, self.vh))
+            blur = self.blurred(scene) if fresh else self.offscreen_tex["blur4"]
+            blur.alpha = int(255 * min(1.0, amt))
+            blur.draw(dstrect=(0, 0, self.vw, self.vh))
+            g.rect(0, 0, self.vw, self.vh, T.bg, 0.45 * amt)
+            self.draw_settings_animated(now, amt)
+        else:
+            self.draw_scene(now)
+        self.draw_night(now)
+
+    def offscreen(self, name, blend, scale=1):
+        """Textura de dibujo fuera de pantalla, al tamaño real de la ventana / scale."""
+        size = (max(1, round(self.vw * self.gfx.dpi / scale)), max(1, round(self.vh * self.gfx.dpi / scale)))
+        tex = self.offscreen_tex.get(name)
+        if tex is None or (tex.width, tex.height) != size:
+            tex = Texture(self.ren, size, target=True)
+            tex.blend_mode = blend
+            self.offscreen_tex[name] = tex
+        return tex
+
+    def blurred(self, scene):
+        """Desenfoque barato: la escena se reduce a la mitad cuatro veces
+        (cada paso promedia píxeles) y luego se estira suave."""
+        src = scene
+        for k in range(1, 5):
+            dst = self.offscreen(f"blur{k}", pygame.BLENDMODE_NONE, 2 ** k)
+            self.ren.target = dst
+            src.alpha = 255
+            src.draw(dstrect=(0, 0, dst.width, dst.height))
+            src = dst
+        self.ren.target = None
+        src.blend_mode = pygame.BLENDMODE_BLEND
+        return src
+
+    def draw_settings_animated(self, now, amt):
+        """El panel aparece creciendo un poco y se desvanece al cerrarse, como
+        las ventanas de Apple."""
+        n_hits, n_rects = len(self.hits), len(self.ui_rects)
+        if amt >= 0.999:
+            self.draw_settings(now)
+        else:
+            panel = self.offscreen("panel", pygame.BLENDMODE_BLEND)
+            self.ren.target = panel
+            self.ren.logical_size = (self.vw, self.vh)
+            self.ren.draw_color = (0, 0, 0, 0)
+            self.ren.clear()
+            self.draw_settings(now)
+            self.ren.target = None
+            sc = lerp(0.92 if self.settings_open else 0.96, 1.0, amt)
+            cx, cy = self.vw / 2, self.vh / 2
+            panel.alpha = int(255 * min(1.0, amt * 1.3))
+            panel.draw(dstrect=(cx - cx * sc, cy - cy * sc, self.vw * sc, self.vh * sc))
+        if not self.settings_open:     # cerrándose: ya no recibe clics
+            del self.hits[n_hits:]
+            del self.ui_rects[n_rects:]
+
+    def draw_scene(self, now):
+        g = self.gfx
         frame_amt = self.m if self.big_kind == FRAME else 0.0
         bg = tuple(round(lerp(a, b, frame_amt)) for a, b in zip(T.bg, C.BG_FRAME))
         self.ren.draw_color = (*bg, 255)
@@ -1053,7 +1153,6 @@ class App:
         if self.fade:
             self.draw_fade(now)
         self.draw_chrome(now)
-        self.draw_night(now)
 
     def draw_tiles(self, tx, ty, s, alpha, bg):
         g = self.gfx
@@ -1249,8 +1348,6 @@ class App:
             label = f"Preparando fotos {p.done}/{len(self.items)}"
             w = g.tsize(g.text(label, 13, C.TEXT, True))[0] + 36
             g.pill(label, self.vw - 24 - w, self.vh - 128, 13, 1.0, anchor="left")
-        if self.settings_open:
-            self.draw_settings(now)
 
     def clock_text(self):
         t = time.localtime()
@@ -1335,7 +1432,7 @@ class App:
         label = "Ajustes"
         w = g.tsize(g.text(label, 14, C.TEXT, True))[0] + 36
         sr = g.button(label, self.vw - 24 - w, y, alpha=a)
-        self.hit(sr, lambda now: setattr(self, "settings_open", True))
+        self.hit(sr, self.open_settings)
         # Abajo: contador y zoom
         if self.lvl == PHOTOS:
             n = sum(1 for i in range(len(self.items)) if self.matches(i))
@@ -1428,7 +1525,6 @@ class App:
 
     def draw_settings(self, now):
         g = self.gfx
-        g.rect(0, 0, self.vw, self.vh, (0, 0, 0), 0.45)
         w, h = 620, 640
         h = min(h, self.vh - 40)
         x, y = (self.vw - w) / 2, (self.vh - h) / 2
@@ -1437,7 +1533,7 @@ class App:
         self.hits.append(((x, y, w, h), lambda now: None))  # clics dentro del panel no lo cierran
         g.label("Ajustes", x + 28, y + 24, 22, bold=True)
         done = g.button("Listo", x + w - 28 - 76, y + 20, h=36, active=True, size=14, pad=18)
-        self.hit(done, lambda now: self.close_settings())
+        self.hit(done, lambda now: self.close_settings(now))
         tabs = [("show", "Presentación"), ("screen", "Pantalla")]
         tw_ = sum(g.tsize(g.text(lbl, 13, T.text, True))[0] + 28 for _, lbl in tabs) + 6
         tsegs, _ = g.segmented(tabs, self.settings_tab, x + (w - tw_) / 2, y + 74, h=36)
@@ -1468,7 +1564,7 @@ class App:
 
         def switch(title, sub, attr, on_change=None):
             row(title, sub)
-            tr = g.toggle(getattr(st, attr), right - 52, ry[0] + 4)
+            tr = g.toggle(getattr(st, attr), right - 52, ry[0] + 4, key=attr)
 
             def flip(now):
                 setattr(st, attr, not getattr(st, attr))
@@ -1533,7 +1629,22 @@ class App:
         while self.running:
             self.step()
             clock.tick(5 if self.sleeping else 60)   # apagada: casi sin gastar
+        self.shutdown()
+
+    def shutdown(self):
+        """Cierra en orden: videos, texturas y al final la ventana. (Si Python
+        libera las texturas después que la ventana, puede cerrarse con error.)"""
         self.close_all_videos()
         self.backlight.restore()
         self.settings.save()
+        g = self.gfx
+        for cache in (g.thumbs, g.screens, g.backdrops, g.texts, g.pills):
+            cache.clear()
+        g.white = g.corner = g.gradient = None
+        self.offscreen_tex.clear()
+        import gc
+        gc.collect()
+        self.ren = None
+        self.win = None
+        gc.collect()
         pygame.quit()

@@ -19,7 +19,7 @@ class Palette:
 DARK = Palette(
     name="dark",
     bg=(13, 13, 15), placeholder=(40, 40, 44),
-    pill=(44, 44, 48, 210), button=(44, 44, 46, 255), panel=(30, 30, 34, 245),
+    pill=(44, 44, 48, 210), button=(44, 44, 46, 255), panel=(30, 30, 34, 255),
     bar=(12, 12, 14), bar_alpha=0.94,
     hairline=(255, 255, 255), hairline_alpha=0.08,
     text=(245, 245, 247), text_dim=(199, 199, 204), text_secondary=(161, 161, 166),
@@ -31,7 +31,7 @@ DARK = Palette(
 LIGHT = Palette(
     name="light",
     bg=(242, 242, 247), placeholder=(218, 218, 224),
-    pill=(255, 255, 255, 235), button=(228, 228, 233, 255), panel=(255, 255, 255, 250),
+    pill=(255, 255, 255, 235), button=(228, 228, 233, 255), panel=(255, 255, 255, 255),
     bar=(249, 249, 251), bar_alpha=0.96,
     hairline=(0, 0, 0), hairline_alpha=0.1,
     text=(28, 28, 30), text_dim=(90, 90, 94), text_secondary=(110, 110, 115),
@@ -44,6 +44,21 @@ LIGHT = Palette(
 class _Current(Palette):
     def set(self, palette):
         self.__dict__.update(palette.__dict__)
+
+
+def blend(a, b, t):
+    """Paleta intermedia entre `a` y `b` (t de 0 a 1), para cambiar de tema
+    gradualmente."""
+    out = {}
+    for k, va in a.__dict__.items():
+        vb = b.__dict__.get(k, va)
+        if isinstance(va, tuple):
+            out[k] = tuple(round(x + (y - x) * t) for x, y in zip(va, vb))
+        elif isinstance(va, float):
+            out[k] = va + (vb - va) * t
+        else:
+            out[k] = vb if t >= 0.5 else va
+    return Palette(**out)
 
 
 T = _Current()

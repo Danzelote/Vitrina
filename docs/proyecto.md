@@ -88,6 +88,8 @@ Al alejarte más allá del zoom mínimo, las fotos se agrupan (zoom semántico):
 
 ### 2.8 Ajustes
 
+Ajustes aparece creciendo un poco sobre el fondo desenfocado y se desvanece al cerrarse. En los selectores la pastilla se desliza de una opción a otra, los interruptores se deslizan y cambian de color suave, y al cambiar de tema claro a oscuro todos los colores pasan gradualmente.
+
 Ajustes tiene dos pestañas: **Presentación** (Ken Burns, Un día como hoy, fecha y lugar, reloj, orden aleatorio, tiempo para volver) y **Pantalla** (apariencia y modo noche).
 
 - **Apariencia:** claro, oscuro o automático (claro de día y oscuro de noche). La presentación siempre es negra; el tema cambia la cuadrícula, los niveles, el visor y los controles. Más adelante el automático podrá usar el sensor de luz.

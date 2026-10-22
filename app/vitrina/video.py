@@ -34,6 +34,15 @@ except Exception:  # pragma: no cover
 # Parámetros del render por software de libmpv (render.h)
 _SW_SIZE, _SW_FORMAT, _SW_STRIDE, _SW_POINTER = 17, 18, 19, 20
 FADE_IN_FRAME = 0.25   # segundos en que el primer cuadro aparece sobre la portada
+_THREADS = []          # hilos de video vivos (para esperarlos al salir)
+
+
+def wait_all(timeout=2.0):
+    """Espera a que los videos terminen de cerrarse (al salir de la app; si no,
+    Python puede terminar mientras mpv aún se apaga y cerrarse con error)."""
+    end = time.monotonic() + timeout
+    for t in list(_THREADS):
+        t.join(max(0.0, end - time.monotonic()))
 
 
 class Player:
@@ -77,6 +86,8 @@ class Player:
         self.desired_pause = start_paused
         self._seek_to = None
         self._thread = threading.Thread(target=self._run, daemon=True)
+        _THREADS[:] = [t for t in _THREADS if t.is_alive()]
+        _THREADS.append(self._thread)
         self._thread.start()
 
     # -- hilo del video ---------------------------------------------------------
