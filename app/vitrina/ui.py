@@ -51,6 +51,9 @@ SETTINGS_IN = 0.38     # Ajustes aparece...
 SETTINGS_OUT = 0.24    # ...y se va un poco más rápido
 THEME_TIME = 0.7       # cambio gradual entre tema claro y oscuro
 BAR_H = 72
+# Teclas de volumen y brillo (códigos de SDL; pygame no les pone nombre).
+MEDIA_KEYS = {0x40000080: "vol_up", 0x40000081: "vol_down", 0x4000007F: "mute", 0x40000106: "mute",
+              0x40000114: "bright_up", 0x40000113: "bright_down"}
 
 
 def inside(rect, x, y):
@@ -139,6 +142,10 @@ class App:
         self.swipe_acc = 0.0
         self.settings_tab = "show"
         self.slide_history = []     # fotos ya mostradas (flecha izquierda en la presentación)
+        self.mouse_at = now         # último movimiento real del mouse
+        self.keys_drove = False     # en el visor se avanzó con flechas o deslizando: sin puntero
+        self.chrome_amt = 1.0       # controles del visor (se ocultan mientras se ve un video)
+        self.pointer_shown = None
         self.lib_version = lib.version if lib else 0
         self.new_keys = []          # fotos recién llegadas: se muestran primero
         self.toast = None           # (texto, inicio) aviso discreto arriba
@@ -170,6 +177,8 @@ class App:
         self.sensor = NIGHT.light_sensor()
         self.glyphs = NC.Glyphs(self.ren)
         self.wifi = WIFI.Wifi()
+        self.volume = WIFI.Volume()
+        self.hud = None             # aviso de volumen o brillo: (tipo, nivel 0–1, silencio, inicio)
         self.wifi.refresh_status()
         self.wifi_checked = now
         self.pw = None              # contraseña de WiFi que se está escribiendo: {"ssid", "text", "show"}
@@ -178,8 +187,13 @@ class App:
         self.ui_rects = []
         self.running = True
         self.last_t = now
-        pygame.mouse.set_visible(False)
+        self.show_pointer(False)
         self.set_pointer()
+
+    def show_pointer(self, visible):
+        if visible != getattr(self, "pointer_shown", None):
+            self.pointer_shown = visible
+            pygame.mouse.set_visible(visible)
 
     def set_pointer(self):
         """Puntero propio: un círculo suave (como el del iPad), no la flecha ni la X."""
@@ -357,7 +371,7 @@ class App:
         self.move_camera(cx, cy, s, C.MORPH_TIME, now)
         self.morph_to(0.0, C.MORPH_TIME, now)
         self.set_anchor()
-        pygame.mouse.set_visible(True)
+        self.show_pointer(True)
 
     def go_frame(self, i, now):
         if self.lvl != PHOTOS:
@@ -384,7 +398,7 @@ class App:
         self.stop_video("view")
         self.stop_video("preview", fade=False)
         self.start_video("frame", i)
-        pygame.mouse.set_visible(False)
+        self.show_pointer(False)
 
     def open_viewer(self, i, now):
         self.mode = VIEWER
@@ -418,6 +432,7 @@ class App:
     def viewer_step(self, d, now):
         if self.mode != VIEWER or self.m_tween:
             return
+        self.keys_drove = True
         if self.swipe:
             self.finish_swipe()
         self.drag = None
@@ -757,6 +772,9 @@ class App:
     def handle(self, e, now):
         if self.debug_input:
             self.debug_event(e)
+        if e.type == pygame.KEYDOWN and e.key in MEDIA_KEYS:
+            self.media_key(MEDIA_KEYS[e.key], now)
+            return
         if (self.pw is not None and self.settings_open and self.settings_tab == "wifi"
                 and e.type in (pygame.KEYDOWN, pygame.TEXTINPUT)):
             self.type_password(e)       # mientras se escribe la contraseña, las teclas son para eso
@@ -846,6 +864,8 @@ class App:
         self.mx, self.my = x, y
         self.inside = True
         self.last_move = now
+        self.mouse_at = now                 # el puntero y los controles vuelven a aparecer
+        self.keys_drove = False
         if self.mode == FRAME:
             if now - self.frame_since < C.FRAME_MOVE_GRACE:
                 return
@@ -1082,7 +1102,7 @@ class App:
             self.settings_amt = self.settings_tw.value(now)[0]
             if self.settings_tw.done(now):
                 self.settings_tw = None
-        pygame.mouse.set_visible(True)
+        self.show_pointer(True)
 
     def update(self, now):
         dt = min(now - self.last_t, 0.1)
@@ -1165,6 +1185,7 @@ class App:
         elif not want_preview and "preview" in self.players:
             self.stop_video("preview", fade=False)
         self.update_players(dt, now)
+        self.update_viewer_idle(dt, now)
         if can_hover and self.lvl != PHOTOS:
             self.hover_group = next((g for g, r in reversed(self.cluster_rects) if inside(r, self.mx, self.my)), None)
         else:
@@ -1194,6 +1215,70 @@ class App:
             else:
                 target = self.hover_group.members[0] if self.hover_group else self.hero
             self.go_frame(target, now)
+
+    def media_key(self, action, now):
+        """Teclas de volumen y brillo, con su aviso al centro como en la Mac."""
+        if action.startswith("vol") or action == "mute":
+            v = self.volume
+            if not v.available:
+                return
+            if action == "mute":
+                v.toggle_mute()
+            else:
+                v.change(v.STEP if action == "vol_up" else -v.STEP)
+            self.hud = ("volume", v.level / 100, v.muted, now)
+        else:
+            b = self.backlight
+            if not b.available:
+                return
+            b.change_user(0.0625 if action == "bright_up" else -0.0625)
+            self.hud = ("brightness", b.user, False, now)
+
+    def draw_hud(self, now):
+        if not self.hud:
+            return
+        kind, level, muted, t0 = self.hud
+        age = now - t0
+        if age > 1.8:
+            self.hud = None
+            return
+        a = min(1.0, age / 0.12, (1.8 - age) / 0.4)
+        g = self.gfx
+        size = 168
+        x, y = self.vw / 2 - size / 2, self.vh * 0.64 - size / 2
+        g.round_rect(x, y, size, size, (28, 28, 30, 215), a, 28)
+        if kind == "volume":
+            name = "speaker_mute" if muted or level <= 0 else "speaker"
+        else:
+            name = "sun"
+        g.draw_icon(name, x + size / 2 - 36, y + 30, 72, (255, 255, 255), a)
+        n = 16
+        filled = 0 if muted else round(level * n)
+        bw, gap = 6, 1.5
+        total = n * bw + (n - 1) * gap
+        bx, by = x + (size - total) / 2, y + size - 34
+        for k in range(n):
+            g.rect(bx + k * (bw + gap), by, bw, 7, (255, 255, 255), a * (1.0 if k < filled else 0.22))
+
+    def update_viewer_idle(self, dt, now):
+        """En el visor: el puntero se esconde al avanzar con flechas o deslizando,
+        y mientras se ve un video sin mover el mouse se esconden también los
+        controles. Moviendo el mouse vuelven."""
+        if self.mode != VIEWER:
+            self.chrome_amt = 1.0
+            if self.mode == GRID:
+                self.show_pointer(True)
+            return
+        vp = self.player_for("view", self.morph_i)
+        idle = now - self.mouse_at > 2.5
+        playing = bool(vp and vp.is_playing)
+        show_chrome = not (playing and idle)
+        target = 1.0 if show_chrome else 0.0
+        self.chrome_amt += (target - self.chrome_amt) * (1 - math.exp(-dt / (0.12 if show_chrome else 0.3)))
+        want_pointer = not self.keys_drove and not (playing and idle) and not self.settings_open
+        if self.settings_open:
+            want_pointer = True
+        self.show_pointer(want_pointer)
 
     def update_drift(self, dt, now):
         if now >= self.drift_at:
@@ -1390,6 +1475,7 @@ class App:
             self.draw_fade(now)
         self.draw_chrome(now)
         self.draw_toast(now)
+        self.draw_hud(now)
 
     def draw_tiles(self, tx, ty, s, alpha, bg):
         g = self.gfx
@@ -1421,8 +1507,6 @@ class App:
             x = tx + s * cx - w / 2
             y = ty + s * cy - w / 2
             a = alpha * (1.0 if self.matches(hovered) else 0.14)
-            if self.hover_amt > 0.05:
-                g.round_rect(x + 6, y + 12 * self.hover_amt, w - 12, w, (0, 0, 0, 255), 0.35 * self.hover_amt * a, radius)
             self.draw_tile(self.items[hovered], x, y, w, w, a, radius * k, bg, idx=hovered, badge=True)
 
     def draw_tile(self, item, x, y, w, h, alpha, radius, bg, prefer_screen=False, idx=None, badge=False, snap=True):
@@ -1727,13 +1811,17 @@ class App:
         g.rect(0, BAR_H - 1, self.vw, 1, T.hairline, T.hairline_alpha * a)
         self.ui_rects.append((0, 0, self.vw, BAR_H))
         y = (BAR_H - 44) / 2
-        r = g.button(tr("Presentación"), 24, y, alpha=a, icon="play")
+        # Derecha: presentación y ajustes, solo con íconos.
+        sr = g.icon_button("gear", self.vw - 24 - 44, y, alpha=a, icon_size=24)
+        self.hit(sr, self.open_settings)
+        r = g.icon_button("play", sr[0] - 10 - 44, y, alpha=a, icon_size=22)
         self.hit(r, self.start_presentation)
+        # Izquierda: el nivel (años, meses, fotos, colecciones).
         options = [(YEARS, tr("Años")), (MONTHS, tr("Meses")), (PHOTOS, tr("Fotos"))]
         if self.groups.coll_list:
             options.append((COLLS, tr("Colecciones")))
         disabled = () if self.groups.has_years else (YEARS,)
-        seg_x = r[0] + r[2] + 12
+        seg_x = 24
         segs, total = g.segmented(options, self.lvl, seg_x, y, alpha=a, disabled=disabled)
         for key, rect in segs:
             if key not in disabled:
@@ -1741,17 +1829,11 @@ class App:
         if self.coll_filter:
             fr = g.button(f"{self.coll_filter}  ×", seg_x + total + 12, y + 6, h=32, alpha=a, active=True, size=13, pad=14)
             self.hit(fr, lambda now: self.set_filter(None))
-        label = tr("Ajustes")
-        w = g.tsize(g.text(label, 14, C.TEXT, True))[0] + 36
-        sr = g.button(label, self.vw - 24 - w, y, alpha=a)
-        self.hit(sr, self.open_settings)
         # Abajo: contador y zoom
         if self.lvl == PHOTOS:
             n = sum(1 for i in range(len(self.items)) if self.matches(i))
-            cols = self.vw / ((C.CELL + C.GAP) * C.ZOOMS[self.zi])
-            cols_txt = f"{cols:.0f}" if abs(cols - round(cols)) < 0.05 else f"{cols:.1f}"
             main = tr("{n} fotos en {c}", n=n, c=self.coll_filter) if self.coll_filter else tr("{n} fotos", n=n)
-            sub = tr("· {c} columnas", c=cols_txt)
+            sub = None
         elif self.lvl == MONTHS:
             main, sub = tr("Meses"), tr("· {n} con fotos", n=len(self.groups.months))
         elif self.lvl == YEARS:
@@ -1809,7 +1891,9 @@ class App:
 
     def draw_viewer_chrome(self, now):
         g = self.gfx
-        a = self.m
+        a = self.m * self.chrome_amt
+        if a <= 0.01:
+            return
         vp = self.player_for("view", self.morph_i)
         if vp and not self.swipe:
             self.draw_video_controls(vp, a)
@@ -1819,11 +1903,10 @@ class App:
         g.pill(sel.date_text, self.vw / 2, self.vh - 66, 14, a, sublabel=sub)
         if sel.is_video and not sel.video_ready and VID.AVAILABLE:
             g.pill(tr("Preparando video…"), self.vw / 2, self.vh - 122, 13, a)
-        r = g.pill(tr("‹  Volver"), 24, 24, 14, a, anchor="left")
+        r = g.pill(tr("‹  Volver"), 24, (BAR_H - 40) / 2, 14, a, anchor="left")
         self.hit(r, self.close_viewer)
-        label = tr("Presentación desde aquí")
-        w = g.tsize(g.text(label, 14, C.TEXT, True))[0] + 36 + 22
-        r2 = g.button(label, self.vw - 24 - w, 24, h=40, alpha=a, icon="play")
+        y = (BAR_H - 44) / 2
+        r2 = g.icon_button("play_here", self.vw - 24 - 44 - 10 - 44, y, alpha=a, icon_size=22)
         self.hit(r2, lambda now: self.go_frame(self.current_viewer_index(), now))
         cur = self.current_viewer_index()
         for d, x in ((-1, 24), (1, self.vw - 24 - 48)):

@@ -5,8 +5,10 @@ segundos y conectarse puede tardar hasta medio minuto.
 """
 
 import os
+import re
 import shutil
 import subprocess
+import sys
 import threading
 
 NMCLI = shutil.which("nmcli")
@@ -162,3 +164,46 @@ def set_timezone(tz):
         return True
     except Exception:          # noqa: BLE001
         return False
+
+
+# -- volumen del sistema (teclas de volumen de la Mac) --------------------------------
+
+AMIXER = shutil.which("amixer")
+
+
+class Volume:
+    """Volumen general con ALSA (amixer). En macOS el sistema ya maneja las teclas."""
+
+    STEP = 6
+
+    def __init__(self):
+        self.available = bool(AMIXER) and sys.platform.startswith("linux")
+        self.level = 80
+        self.muted = False
+        if self.available:
+            threading.Thread(target=self._read, daemon=True).start()
+
+    def _read(self):
+        try:
+            out = subprocess.run([AMIXER, "-M", "get", "Master"], capture_output=True, text=True, timeout=5).stdout
+            m = re.search(r"\[(\d+)%\](?:.*\[(on|off)\])?", out)
+            if m:
+                self.level = int(m.group(1))
+                self.muted = m.group(2) == "off"
+        except Exception:      # noqa: BLE001
+            pass
+
+    def _apply(self):
+        if not self.available:
+            return
+        args = [AMIXER, "-q", "-M", "sset", "Master", f"{self.level}%", "mute" if self.muted else "unmute"]
+        threading.Thread(target=lambda: subprocess.run(args, capture_output=True, timeout=5), daemon=True).start()
+
+    def change(self, step):
+        self.muted = False
+        self.level = max(0, min(100, self.level + step))
+        self._apply()
+
+    def toggle_mute(self):
+        self.muted = not self.muted
+        self._apply()

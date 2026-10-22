@@ -160,6 +160,13 @@ class Backlight:
         self.max = self._read("max_brightness") or 0
         self.original = self._read("brightness")
         self._last = None
+        # Brillo que eligió la persona (teclas de brillo), como fracción del máximo.
+        self.user = (self.original / self.max) if self.max and self.original else 1.0
+        self.factor = 1.0          # lo que pide el modo noche (1 = normal)
+
+    def change_user(self, step):
+        self.user = max(0.06, min(1.0, self.user + step))
+        self.set(self.factor)
 
     @property
     def available(self):
@@ -178,7 +185,8 @@ class Backlight:
         """fraction 1 = brillo original, 0 = apagada."""
         if not self.available:
             return
-        value = round(self.original * max(0.0, min(1.0, fraction)))
+        self.factor = fraction
+        value = round(self.max * self.user * max(0.0, min(1.0, fraction)))
         if value == self._last:
             return
         try:

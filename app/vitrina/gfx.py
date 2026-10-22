@@ -351,6 +351,76 @@ class Gfx:
         """Rectángulo redondeado (por defecto, forma de píldora)."""
         self.fill_shape(x, y, w, h, color, alpha, radius)
 
+    # -- íconos -----------------------------------------------------------------
+
+    def icon(self, name, size):
+        """Ícono blanco (se tiñe al dibujarlo), dibujado grande y reducido para
+        que las orillas queden suaves. size en puntos."""
+        px = max(8, round(size * self.dpi))
+        key = ("icon", name, px)
+        tex = self.pills.get_item(key)
+        if tex is not None:
+            return tex
+        k = 4
+        S = px * k
+        surf = pygame.Surface((S, S), pygame.SRCALPHA)
+        surf.fill((255, 255, 255, 0))
+        W = (255, 255, 255, 255)
+        clear = (255, 255, 255, 0)
+        c = S / 2
+
+        def pt(fx, fy):
+            return (fx * S, fy * S)
+        if name == "play":
+            pygame.draw.polygon(surf, W, [pt(0.30, 0.20), pt(0.30, 0.80), pt(0.80, 0.50)])
+        elif name == "play_here":           # |▶ : presentación desde esta foto
+            pygame.draw.rect(surf, W, pygame.Rect(*pt(0.18, 0.22), 0.10 * S, 0.56 * S), border_radius=int(0.03 * S))
+            pygame.draw.polygon(surf, W, [pt(0.38, 0.20), pt(0.38, 0.80), pt(0.86, 0.50)])
+        elif name == "gear":
+            teeth, r_out, r_in = 8, 0.48 * S, 0.37 * S
+            pts = []
+            for i in range(teeth * 4):
+                ang = 2 * math.pi * (i - 0.5) / (teeth * 4)
+                r = r_out if (i % 4) in (0, 1) else r_in
+                pts.append((c + r * math.cos(ang), c + r * math.sin(ang)))
+            pygame.draw.polygon(surf, W, pts)
+            pygame.draw.circle(surf, W, (c, c), r_in * 1.02)
+            pygame.draw.circle(surf, clear, (c, c), 0.16 * S)
+        elif name in ("speaker", "speaker_mute"):
+            pygame.draw.polygon(surf, W, [pt(0.12, 0.38), pt(0.28, 0.38), pt(0.48, 0.18), pt(0.48, 0.82),
+                                          pt(0.28, 0.62), pt(0.12, 0.62)])
+            if name == "speaker":
+                for r in (0.16, 0.28):
+                    rect = pygame.Rect(0, 0, 2 * r * S, 2 * r * S)
+                    rect.center = (0.50 * S, c)
+                    pygame.draw.arc(surf, W, rect, -0.9, 0.9, int(0.06 * S))
+            else:
+                w = int(0.065 * S)
+                pygame.draw.line(surf, W, pt(0.60, 0.36), pt(0.86, 0.64), w)
+                pygame.draw.line(surf, W, pt(0.86, 0.36), pt(0.60, 0.64), w)
+        elif name == "sun":
+            pygame.draw.circle(surf, W, (c, c), 0.18 * S)
+            for i in range(8):
+                ang = 2 * math.pi * i / 8
+                pygame.draw.line(surf, W, (c + 0.28 * S * math.cos(ang), c + 0.28 * S * math.sin(ang)),
+                                 (c + 0.42 * S * math.cos(ang), c + 0.42 * S * math.sin(ang)), int(0.06 * S))
+        tex = self._tex(pygame.transform.smoothscale(surf, (px, px)))
+        self.pills.put(key, tex)
+        return tex
+
+    def draw_icon(self, name, x, y, size, color, alpha=1.0):
+        t = self.icon(name, size)
+        t.color = color[:3]
+        t.alpha = int(255 * min(alpha, 1.0))
+        t.draw(dstrect=(x, y, size, size))
+
+    def icon_button(self, name, x, y, size=44, alpha=1.0, icon_size=None):
+        """Botón redondo con solo un ícono. Devuelve su rectángulo."""
+        self.round_rect(x, y, size, size, T.button, alpha)
+        s = icon_size or size * 0.5
+        self.draw_icon(name, x + (size - s) / 2, y + (size - s) / 2, s, T.text, alpha)
+        return (x, y, size, size)
+
     def button(self, label, x, y, h=44, alpha=1.0, active=False, bold=True, size=14, icon=None, pad=18):
         """Botón tipo píldora. Devuelve su rectángulo (x, y, w, h)."""
         fg = T.active_fg if active else T.text
