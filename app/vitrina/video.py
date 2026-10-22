@@ -41,6 +41,12 @@ AUDIO_OUT = 0.8        # fundido de salida al pausar, deslizar o cerrar
 # atrasados respecto a lo que mpv cree que suena. Por eso el video sigue vivo
 # (en silencio) un buen rato después del fundido antes de cerrarse.
 AUDIO_HOLD = 1.5
+# En macOS se puede bajar el volumen justo a la salida (ao-volume: el del propio
+# reproductor en el sistema, no el general). Ese cambio se oye al instante, sin
+# esperar lo que ya estaba guardado en el búfer: el fundido empieza con el clic.
+OUTPUT_VOLUME = sys.platform == "darwin"
+AUDIO_OUT_NOW = 0.5    # fundido a la salida (macOS): termina antes que la animación de cerrar
+OUTPUT_HOLD = 0.25     # y se cierra un momento después de llegar a silencio
 # Los fundidos de salida y de reanudar también los hace mpv, con un filtro de
 # volumen que depende del tiempo del propio audio (t). Así no importa cuánto audio
 # tenga guardado el sistema por adelantado: el fundido cae justo donde debe, y
@@ -79,6 +85,7 @@ class Player:
         self.fade_asked = None           # cuándo se pidió (respaldo por si no hay reloj de audio)
         self.audio_pos = None            # lo que está sonando ahora (audio-pts)
         self._close_now = False
+        self.silent_since = None
         self.want_pause = start_paused
         self.pause_when_silent = False
         self.closing = False
@@ -151,14 +158,25 @@ class Player:
                     self._apply_fade(*self._fade_req)
                     self._fade_req = None
                 if self.audio:
-                    # Respaldo del fundido con el volumen general (mpv lo aplica al cubo).
-                    vol = round(100.0 * (max(0.0, self.volume) / 100.0) ** (1 / 3), 1)
-                    if vol != applied_volume:
-                        try:
-                            self.mpv.volume = vol
-                        except Exception:
-                            pass
-                        applied_volume = vol
+                    if OUTPUT_VOLUME:
+                        # macOS: volumen a la salida, inmediato (escala lineal).
+                        vol = round(max(0.0, self.volume), 1)
+                        if vol != applied_volume:
+                            try:
+                                self.mpv.ao_volume = vol
+                                applied_volume = vol
+                            except Exception as exc:     # aún no abre el audio: reintenta luego
+                                if DEBUG and vol < 100:
+                                    print(f"[audio] ao-volume no disponible: {exc}", flush=True)
+                    else:
+                        # Respaldo del fundido con el volumen general (mpv lo aplica al cubo).
+                        vol = round(100.0 * (max(0.0, self.volume) / 100.0) ** (1 / 3), 1)
+                        if vol != applied_volume:
+                            try:
+                                self.mpv.volume = vol
+                            except Exception:
+                                pass
+                            applied_volume = vol
                 if self.desired_pause != applied_pause:
                     self.mpv.pause = self.desired_pause
                     applied_pause = self.desired_pause
@@ -301,11 +319,16 @@ class Player:
             # Volumen general de respaldo: sigue al fundido pedido.
             fading_out = self.closing or self.pause_when_silent or (self.paused and self.fade_end is not None)
             goal = 0.0 if fading_out else 100.0
-            speed = 100.0 / (AUDIO_OUT if fading_out else AUDIO_RESUME)
+            out_time = AUDIO_OUT_NOW if OUTPUT_VOLUME else AUDIO_OUT
+            speed = 100.0 / (out_time if fading_out else AUDIO_RESUME)
             if self.volume < goal:
                 self.volume = min(goal, self.volume + speed * dt)
             elif self.volume > goal:
                 self.volume = max(goal, self.volume - speed * dt)
+            if self.volume > 0.0:
+                self.silent_since = None
+            elif self.silent_since is None:
+                self.silent_since = now
             # "Ya se escuchó todo el fundido": lo que suena pasó su final. Si no hay
             # reloj de audio (o se atora), un respaldo por tiempo.
             drained = False
@@ -313,6 +336,8 @@ class Player:
                 if self.fade_end is not None and self.audio_pos is not None:
                     drained = self.audio_pos >= self.fade_end + AUDIO_HOLD
                 drained = drained or now - self.fade_asked > AUDIO_OUT + AUDIO_HOLD + 0.8
+                if OUTPUT_VOLUME and self.silent_since is not None:
+                    drained = drained or now - self.silent_since >= OUTPUT_HOLD
             if self.pause_when_silent and drained:
                 self.desired_pause = True
                 self.paused = True
