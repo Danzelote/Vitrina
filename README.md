@@ -43,6 +43,14 @@ Ver [docs/compatibilidad.md](docs/compatibilidad.md) para los modelos probados.
 - [docs/proyecto.md](docs/proyecto.md) — el documento del proyecto: diseño, decisiones, arquitectura y fases.
 - [docs/compatibilidad.md](docs/compatibilidad.md) — modelos probados y hallazgos.
 
+## Apoya el proyecto
+
+Vitrina es gratis y de código abierto. Si te sirvió, o simplemente te gusta la idea de darle una segunda vida a las Macs viejas, puedes apoyar su desarrollo con una donación:
+
+[![Apoyar en Ko-fi](https://img.shields.io/badge/Apoyar_en-Ko--fi-FF5E5B?style=for-the-badge&logo=ko-fi&logoColor=white)](https://ko-fi.com/danzelot)
+
+También ayuda mucho probarlo en tu Mac y contar cómo te fue en [docs/compatibilidad.md](docs/compatibilidad.md).
+
 ## Licencia
 
 [GPL-3.0](LICENSE). Puedes usar, modificar y compartir Vitrina; las versiones modificadas que distribuyas deben seguir siendo libres.

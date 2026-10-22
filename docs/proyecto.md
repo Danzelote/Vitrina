@@ -87,6 +87,7 @@ Al alejarte más allá del zoom mínimo, las fotos se agrupan (zoom semántico):
 - Mostrar fecha y lugar.
 - Orden aleatorio.
 - Apagar la pantalla de noche (horario).
+- **Acerca de Vitrina:** versión, enlace al repositorio y a [Ko-fi](https://ko-fi.com/danzelot) para apoyar el proyecto. Discreto, sin interrumpir nunca la presentación.
 
 ---
 
