@@ -79,6 +79,8 @@ La primera vez con una carpeta nueva, Vitrina prepara las miniaturas en segundo 
 
 Si el zoom con dos dedos va al revés de lo que esperas, agrega `--invert-zoom`.
 
+Para revisar los fundidos de sonido de los videos, corre con `VITRINA_DEBUG_AUDIO=1 python app/main.py …`: la terminal muestra cuándo empieza cada fundido y cuándo se cierra el video.
+
 ## Pruebas
 
 ```bash

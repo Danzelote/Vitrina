@@ -1239,9 +1239,10 @@ class App:
             self.offscreen_tex[name] = tex
         return tex
 
-    def blurred(self, scene, name="blur", steps=4):
+    def blurred(self, scene, name="blur", steps=4, smooth_up=False):
         """Desenfoque barato: la escena se reduce a la mitad varias veces
-        (cada paso promedia píxeles) y luego se estira suave."""
+        (cada paso promedia píxeles) y luego se estira suave. Con smooth_up se
+        vuelve a agrandar en pasos (más parejo: manchas de color sin cuadritos)."""
         src = scene
         for k in range(1, steps + 1):
             dst = self.offscreen(f"{name}{k}", pygame.BLENDMODE_NONE, 2 ** k)
@@ -1249,6 +1250,13 @@ class App:
             src.alpha = 255
             src.draw(dstrect=(0, 0, dst.width, dst.height))
             src = dst
+        if smooth_up:
+            for k in range(steps - 1, max(1, steps - 3), -1):
+                dst = self.offscreen(f"{name}up{k}", pygame.BLENDMODE_NONE, 2 ** k)
+                self.ren.target = dst
+                src.alpha = 255
+                src.draw(dstrect=(0, 0, dst.width, dst.height))
+                src = dst
         self.ren.target = None
         src.blend_mode = pygame.BLENDMODE_BLEND
         return src
@@ -1602,7 +1610,8 @@ class App:
                 g.image(gray, *rect, alpha=0.6 * a, snap=False)
         self.ren.target = None
         # 2) Desenfocada y tenue.
-        blur = self.blurred(scene, "nightblur", 3)
+        # Muy desenfocado: casi manchas de color, sin detalle (ni pixeles de fotos estiradas).
+        blur = self.blurred(scene, "nightblur", 6, smooth_up=True)
         win = self.offscreen("nightwin", pygame.BLENDMODE_BLEND)
         self.ren.target = win
         self.ren.logical_size = (self.vw, self.vh)
