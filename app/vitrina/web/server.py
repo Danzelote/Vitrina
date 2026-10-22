@@ -27,6 +27,7 @@ from .. import __version__
 from .. import config as C
 from .. import library
 from .. import livelib
+from .. import qrscan as QRSCAN
 from ..dupes import Dupes
 from ..places import place_of
 from ..settings import config_dir
@@ -276,7 +277,8 @@ class Handler(BaseHTTPRequestHandler):
                      luz=getattr(self.v.app.sensor, "level", None),
                      exposicion_manual=getattr(self.v.app.sensor, "manual_exposure", None),
                      brillo_minimo=self.v.app.settings.min_brightness,
-                     brillo_maximo_raw=self.v.app.backlight.max)
+                     brillo_maximo_raw=self.v.app.backlight.max,
+                     camara_qr=QRSCAN.LAST_LOG)
             return self.send(200, json.dumps(d, ensure_ascii=False, indent=2), "application/json; charset=utf-8")
         if path == "/api/photos":
             return self.photos()

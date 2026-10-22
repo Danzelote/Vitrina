@@ -42,6 +42,7 @@ Ver [docs/compatibilidad.md](docs/compatibilidad.md) para los modelos probados.
 
 - [docs/proyecto.md](docs/proyecto.md) — el documento del proyecto: diseño, decisiones, arquitectura y fases.
 - [docs/compatibilidad.md](docs/compatibilidad.md) — modelos probados y hallazgos.
+- [docs/atajos.md](docs/atajos.md) — atajos de teclado (en la Vitrina, tecla H).
 - [docs/desarrollo.md](docs/desarrollo.md) — cómo correr la app mientras se desarrolla.
 
 ## Apoya el proyecto

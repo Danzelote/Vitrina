@@ -196,6 +196,9 @@ class App:
         self.bright = self.settings.brightness   # brillo que se ve ahorita (se acerca al objetivo)
         self.bright_fast_until = -1e9
         self.calib = None           # calibración del brillo mínimo en curso
+        self.help_open = False      # lista de atajos de teclado (tecla H)
+        self.help_at = 0.0
+        self.help_amt = 0.0
         self.scan = None            # cámara leyendo el código QR del WiFi: {"scanner", "start", "tex"}
         self.hits = []
         self.ui_rects = []
@@ -885,8 +888,89 @@ class App:
         elif e.type in (pygame.WINDOWSIZECHANGED, pygame.WINDOWRESIZED):
             self.fit_to_window()
 
+    def say(self, text, now):
+        """Aviso breve arriba al usar un atajo de teclado."""
+        self.toast_new = 0
+        self.toast = (text, now - 2.0)          # dura menos que los avisos normales
+
+    def shortcut(self, key, now):
+        """Atajos de teclado (lista completa con la tecla H). Devuelve True si la tecla era uno."""
+        st = self.settings
+
+        def cycle(attr, values, labels, title):
+            cur = getattr(st, attr)
+            nxt = values[(values.index(cur) + 1) % len(values)] if cur in values else values[0]
+            setattr(st, attr, nxt)
+            st.save()
+            self.say(f"{tr(title)}: {tr(labels[values.index(nxt)])}", now)
+
+        def flip(attr, title):
+            setattr(st, attr, not getattr(st, attr))
+            st.save()
+            self.say(f"{tr(title)}: {tr('Sí') if getattr(st, attr) else tr('No')}", now)
+
+        if key in (pygame.K_b, pygame.K_w, pygame.K_a):
+            value, label = {pygame.K_b: ("dark", "Oscuro"), pygame.K_w: ("light", "Claro"),
+                            pygame.K_a: ("auto", "Automático")}[key]
+            self.set_theme(value)
+            st.save()
+            self.say(f"{tr('Apariencia')}: {tr(label)}", now)
+        elif key == pygame.K_k:
+            cycle("kenburns", [KB.OFF, KB.ZOOM, KB.PAN], ["Apagado", "Solo zoom", "Zoom y paneo"], "Ken Burns")
+        elif key == pygame.K_r:
+            cycle("clock", ["off", "12", "24"], ["Oculto", "12 h", "24 h"], "Reloj")
+        elif key == pygame.K_s:
+            self.queue = []
+            flip("shuffle", "Orden aleatorio")
+        elif key == pygame.K_m:
+            flip("memories", "Un día como hoy")
+        elif key == pygame.K_i:
+            flip("show_info", "Fecha y lugar")
+        elif key == pygame.K_l:
+            flip("auto_brightness", "Brillo automático")
+        elif key == pygame.K_e:
+            st.language = "en" if st.language == "es" else "es"
+            self.apply_language()
+            st.save()
+            self.say(tr("Idioma") + ": " + dict(I18N.LANGS)[st.language], now)
+        elif key == pygame.K_COMMA:
+            if self.settings_open:
+                self.close_settings(now)
+            else:
+                self.open_settings(now)
+        elif key in (pygame.K_h, pygame.K_SLASH, pygame.K_QUESTION):
+            self.help_open = not self.help_open
+            self.help_at = now
+        elif key == pygame.K_p and self.items:
+            if self.mode == FRAME:
+                self.enter_grid(now)
+            elif self.mode == VIEWER:
+                self.go_frame(self.current_viewer_index(), now)
+            else:
+                self.start_presentation(now)
+        elif key in (pygame.K_1, pygame.K_2, pygame.K_3, pygame.K_4) and self.items:
+            lvl = {pygame.K_1: YEARS, pygame.K_2: MONTHS, pygame.K_3: PHOTOS, pygame.K_4: COLLS}[key]
+            if self.mode == VIEWER:
+                self.close_viewer(now)
+            elif self.mode == FRAME:
+                self.enter_grid(now)
+            if self.mode == GRID:
+                if lvl == PHOTOS and self.lvl != PHOTOS:
+                    self.level_in(now, at_mouse=False)
+                else:
+                    self.go_level(lvl, now)
+        else:
+            return False
+        return True
+
     def on_key(self, e, now):
-        if e.key == pygame.K_q:
+        if self.help_open:
+            self.help_open = False          # cualquier tecla cierra la lista de atajos
+            if e.key in (pygame.K_ESCAPE, pygame.K_h, pygame.K_SLASH, pygame.K_QUESTION):
+                return
+        if not (e.mod & (pygame.KMOD_CTRL | pygame.KMOD_GUI | pygame.KMOD_ALT)) and self.shortcut(e.key, now):
+            return
+        if e.key == pygame.K_q and not WIFI.SYSTEM:      # en la USB, Q no cierra la app por accidente
             self.running = False
         elif e.key == pygame.K_ESCAPE:
             if self.settings_open:
@@ -902,9 +986,6 @@ class App:
                 self.win.set_windowed()
             else:
                 self.win.set_fullscreen(True)
-        elif e.key == pygame.K_i:
-            self.settings.show_info = not self.settings.show_info
-            self.settings.save()
         elif e.key == pygame.K_SPACE:
             self.toggle_video(now)
         elif e.key == pygame.K_RIGHT:
@@ -1555,8 +1636,52 @@ class App:
         else:
             self.draw_scene(now)
         self.draw_night(now)
+        self.draw_help(now)
         self.draw_power(now)
         self.draw_dim()
+
+    HELP = [
+        ("Presentación", [("P", "Empezar o salir de la presentación"), ("← →", "Foto anterior o siguiente"),
+                          ("Espacio", "Pausar o seguir el video"), ("Esc", "Volver")]),
+        ("Fotos", [("1 2 3 4", "Años, Meses, Fotos, Colecciones"), ("+ −", "Acercar o alejar")]),
+        ("Ajustes rápidos", [("B · W · A", "Apariencia: oscuro, claro o automático"),
+                             ("K", "Ken Burns"), ("R", "Reloj"), ("I", "Fecha y lugar"),
+                             ("M", "Un día como hoy"), ("S", "Orden aleatorio"),
+                             ("L", "Brillo automático"), ("N", "Modo noche ahora"),
+                             ("E", "Español o inglés"), (",", "Ajustes"), ("H", "Esta lista")]),
+    ]
+
+    def draw_help(self, now):
+        target = 1.0 if self.help_open else 0.0
+        self.help_amt += (target - self.help_amt) * (1 - math.exp(-self.gfx.dt / 0.07))
+        if self.help_amt < 0.01:
+            self.help_amt = 0.0 if not self.help_open else self.help_amt
+            return
+        a = self.help_amt
+        g = self.gfx
+        g.rect(0, 0, self.vw, self.vh, (0, 0, 0), 0.4 * a)
+        rows = sum(len(items) + 1 for _, items in self.HELP)
+        w, h = 520, 70 + rows * 27 + 20
+        sc = lerp(0.95, 1.0, EASE(a))
+        x, y = (self.vw - w * sc) / 2, (self.vh - h * sc) / 2
+        g.round_rect(x, y, w * sc, h * sc, T.panel, a, 22)
+        if a < 0.6:
+            return
+        ta = (a - 0.6) / 0.4
+        x, y = (self.vw - w) / 2, (self.vh - h) / 2
+        g.label(tr("Atajos de teclado"), x + 28, y + 24, 20, ta, bold=True)
+        yy = y + 70
+        for title, items in self.HELP:
+            g.label(tr(title).upper(), x + 28, yy, 11, ta, bold=True, color=T.text_secondary)
+            yy += 27
+            for keys, what in items:
+                kt = g.text(keys, 13, T.text, True)
+                kw, _ = g.tsize(kt)
+                g.round_rect(x + 28, yy - 4, kw + 18, 24, T.button, ta, 7)
+                g.label(keys, x + 37, yy, 13, ta, bold=True)
+                g.label(tr(what), x + 150, yy, 14, ta)
+                yy += 27
+        self.hits = [((0, 0, self.vw, self.vh), lambda now: setattr(self, "help_open", False))]
 
     def draw_dim(self):
         """Brillo por debajo del mínimo de la luz de fondo: se oscurece la imagen."""
@@ -2326,7 +2451,7 @@ class App:
             choice("Color del reloj clásico", "Rojo: el que menos molesta", "night_color",
                    [("white", "Blanco"), ("blue", "Azul"), ("red", "Rojo")],
                    enabled=st.night != NIGHT.NEVER and st.night_style == "classic")
-            g.label(tr("Tecla N: simula la noche para probarlo"), x + 28, ry[0] - 4, 12, color=T.text_secondary)
+            g.label(tr("Tecla N: la noche ahora · H: todos los atajos"), x + 28, ry[0] - 4, 12, color=T.text_secondary)
         elif self.settings_tab == "wifi":
             self.draw_wifi_tab(x, y + 130, w, now)
         else:
@@ -2512,7 +2637,8 @@ class App:
             sc["tex"].draw(dstrect=(px, py, pw_, ph), flip_x=True)       # como espejo
         else:
             g.round_rect(px, py, pw_, ph, (28, 28, 30), 1.0, 18)
-            msg = tr("No se pudo abrir la cámara") if scanner.error else tr("Abriendo la cámara…")
+            msg = tr("No se pudo abrir la cámara") if scanner.error else \
+                tr("La cámara no manda imagen") if scanner.stalled else tr("Abriendo la cámara…")
             g.label_centered(msg, cx, py + ph / 2 - 10, 15, color=soft)
         # Esquinas de guía
         k, t_ = 34, 4

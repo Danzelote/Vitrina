@@ -259,6 +259,12 @@ class Backlight:
         self._last = None
         self.floor = floor if floor and floor > 0 else self.DEFAULT_FLOOR
         self.dim = 0.0          # oscurecimiento de la imagen (lo dibuja la app)
+        # Escribir el brillo puede tardar (en la MacBook5,2, varios ms): se hace
+        # en otro hilo para que la animación no se trabe. Solo cuenta el último valor.
+        self._pending = None
+        self._wake = threading.Event()
+        if self.dir:
+            threading.Thread(target=self._writer, daemon=True).start()
 
     @property
     def available(self):
@@ -298,13 +304,30 @@ class Backlight:
     def write_raw(self, value):
         if not self.available or value == self._last:
             return
-        try:
-            with open(os.path.join(self.dir, "brightness"), "w") as f:
-                f.write(str(max(0, min(self.max, int(value)))))
-            self._last = value
-        except OSError:
-            self.dir = None
+        self._last = value
+        self._pending = value
+        self._wake.set()
+
+    def _writer(self):
+        while True:
+            self._wake.wait()
+            self._wake.clear()
+            value, self._pending = self._pending, None
+            if value is None or not self.dir:
+                continue
+            try:
+                with open(os.path.join(self.dir, "brightness"), "w") as f:
+                    f.write(str(max(0, min(self.max, int(value)))))
+            except OSError:
+                self.dir = None
+
+    def flush(self, timeout=1.0):
+        """Espera a que se escriba el último valor (al salir)."""
+        end = time.monotonic() + timeout
+        while self._pending is not None and time.monotonic() < end:
+            time.sleep(0.01)
 
     def restore(self):
         if self.available and self.original is not None:
             self.write_raw(self.original)
+            self.flush()

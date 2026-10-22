@@ -20,6 +20,7 @@ except Exception:          # noqa: BLE001 (sin libzbar)
     AVAILABLE = False
 
 W, H = 480, 360            # tamaño de los cuadros (la iSight es 4:3)
+LAST_LOG = []              # últimos mensajes de la cámara (para el Diagnóstico)
 
 
 def parse_wifi(text):
@@ -65,6 +66,8 @@ class Scanner:
         self.result = None
         self.error = None
         self.seen_other = False     # vio un código QR que no es de WiFi
+        self.started = time.monotonic()
+        self.log = []               # lo que dice ffmpeg (para el Diagnóstico)
         self._stop = False
         self._proc = None
         ffmpeg = shutil.which("ffmpeg")
@@ -72,15 +75,32 @@ class Scanner:
             self.error = "unavailable"
             return
         try:
+            # Sin filtros que dependan de la hora de cada cuadro (la iSight manda
+            # horas raras y un filtro de "cuadros por segundo" se queda esperando).
             self._proc = subprocess.Popen(
-                [ffmpeg, "-v", "error", "-f", "v4l2", "-i", device,
-                 "-vf", f"fps=12,scale={W}:{H}", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
-                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=W * H * 3)
+                [ffmpeg, "-v", "warning", "-f", "v4l2", "-i", device,
+                 "-vf", f"scale={W}:{H}", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=W * H * 3)
         except Exception as exc:       # noqa: BLE001
             self.error = str(exc)
             return
         threading.Thread(target=self._read, daemon=True).start()
         threading.Thread(target=self._decode, daemon=True).start()
+        threading.Thread(target=self._stderr, daemon=True).start()
+
+    def _stderr(self):
+        global LAST_LOG
+        for line in self._proc.stderr:
+            text = line.decode("utf-8", "replace").strip()
+            if text:
+                self.log = (self.log + [text])[-12:]
+                LAST_LOG = self.log
+                print("cámara:", text, flush=True)
+
+    @property
+    def stalled(self):
+        """Pasaron unos segundos y la cámara no ha mandado ninguna imagen."""
+        return self.frame is None and time.monotonic() - self.started > 8
 
     def _read(self):
         size = W * H * 3

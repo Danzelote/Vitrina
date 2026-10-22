@@ -37,6 +37,7 @@ const EN = {
   "Color del reloj": "Clock color", "Blanco": "White", "Azul": "Blue", "Rojo": "Red",
   "Esta Mac no tiene sensor de luz ni cámara.": "This Mac has no light sensor or camera.",
   "Brillo automático": "Auto-brightness", "Noche": "Night",
+  "El brillo mínimo se calibra en la Vitrina: Ajustes → Pantalla.": "Minimum brightness is calibrated on the Vitrina: Settings → Display.",
   "Vitrina": "Vitrina", "Espacio": "Storage", "{a} libres de {b}": "{a} free of {b}",
   "Contenido": "Content", "Versión": "Version",
   "Desconectar este celular": "Disconnect this phone", "¿Desconectar este celular?": "Disconnect this phone?",
@@ -116,6 +117,7 @@ async function refresh() {
 }
 
 function go(tab) {
+  if (tab !== S.tab) S.setPage = null;
   S.tab = tab; sessionStorage.setItem("tab", tab);
   if (tab !== "photos") { S.selecting = false; S.selected.clear(); }
   document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === tab));
@@ -472,33 +474,55 @@ function switchRow(key, title) {
 }
 const gb = (b) => (b / 1e9 >= 100 ? Math.round(b / 1e9) : (b / 1e9).toFixed(1)) + " GB";
 
-function renderSettings() {
+// Ajustes como en el iPhone: una lista con secciones que se abren en su propia página.
+const SET_PAGES = {
+  show: { title: "Presentación", icon: "▶", color: "#ff9f0a" },
+  screen: { title: "Pantalla", icon: "☀", color: "#0a84ff" },
+  night: { title: "Noche", icon: "☾", color: "#5e5ce6" },
+};
+
+function settingsPageHTML(page) {
   const s = S.info.settings, i = S.info;
   const nightOn = s.night !== "never";
-  $view.innerHTML = `
-    <h1>${t("Ajustes")}</h1>
-    <div class="section">${t("Presentación")}</div>
-    <div class="card">
+  if (page === "show") return `<div class="card">
       ${segRow("kenburns", "Ken Burns")}
       ${switchRow("memories", "Un día como hoy")}
       ${switchRow("show_info", "Fecha y lugar")}
       ${segRow("clock", "Reloj")}
       ${switchRow("shuffle", "Orden aleatorio")}
       ${segRow("idle_seconds", "Volver a la presentación")}
-    </div>
-    <div class="section">${t("Pantalla")}</div>
-    <div class="card">
+    </div>`;
+  if (page === "screen") return `<div class="card">
       ${segRow("language", "Idioma")}
       ${segRow("theme", "Apariencia")}
       ${switchRow("auto_brightness", "Brillo automático")}
       ${s.auto_brightness && !i.light_sensor ? `<div class="row"><span class="note">${t("Esta Mac no tiene sensor de luz ni cámara.")}</span></div>` : ""}
     </div>
-    <div class="section">${t("Noche")}</div>
-    <div class="card">
+    <p class="foot">${t("El brillo mínimo se calibra en la Vitrina: Ajustes → Pantalla.")}</p>`;
+  return `<div class="card">
       ${segRow("night", "Modo noche")}
       ${segRow("night_hours", "Horario", s.night === "schedule")}
       ${segRow("night_style", "De noche", nightOn)}
       ${segRow("night_color", "Color del reloj", nightOn && s.night_style === "classic")}
+    </div>`;
+}
+
+function renderSettings(dir) {
+  const i = S.info, page = S.setPage;
+  const anim = dir === "in" ? "push-in" : dir === "out" ? "push-out" : "";
+  if (page) {
+    $view.innerHTML = `<div class="${anim}">
+      <button class="back" id="back">‹ ${t("Ajustes")}</button>
+      <h1>${t(SET_PAGES[page].title)}</h1>
+      ${settingsPageHTML(page)}</div>`;
+    $view.querySelector("#back").onclick = () => { S.setPage = null; renderSettings("out"); window.scrollTo(0, 0); };
+  } else {
+    $view.innerHTML = `<div class="${anim}">
+    <h1>${t("Ajustes")}</h1>
+    <div class="card">
+      ${Object.entries(SET_PAGES).map(([k, p]) => `<button class="row nav" data-page="${k}">
+        <span class="ico" style="background:${p.color}">${p.icon}</span>
+        <span class="grow title">${t(p.title)}</span><span class="chevron">›</span></button>`).join("")}
     </div>
     <div class="section">${t("Vitrina")}</div>
     <div class="card">
@@ -507,10 +531,15 @@ function renderSettings() {
         <div class="disk"><i style="width:${(100 * (1 - i.disk.free / i.disk.total)).toFixed(1)}%"></i></div></div>` : ""}
       <div class="row"><span class="grow title">${t("Contenido")}</span><span class="value">${count(i.photos, "1 foto", "{n} fotos")} · ${count(i.videos, "1 video", "{n} videos")}</span></div>
       <div class="row"><span class="grow title">${t("Versión")}</span><span class="value">${esc(i.version)}</span></div>
+      <a class="row nav" href="/api/diag" target="_blank"><span class="grow title">${t("Diagnóstico")}</span><span class="chevron">›</span></a>
     </div>
     <div class="card" style="margin-top:24px"><button class="row danger" id="unpair">${t("Desconectar este celular")}</button></div>
-    <p class="sub" style="text-align:center;margin-top:18px">github.com/Danzelote/Vitrina · ko-fi.com/danzelot<br>
-      <a href="/api/diag" target="_blank" style="color:var(--text2)">${t("Diagnóstico")}</a></p>`;
+    <p class="sub" style="text-align:center;margin-top:18px">github.com/Danzelote/Vitrina · ko-fi.com/danzelot</p></div>`;
+    $view.querySelectorAll("[data-page]").forEach((b) => {
+      b.onclick = () => { S.setPage = b.dataset.page; renderSettings("in"); window.scrollTo(0, 0); };
+    });
+  }
+  document.querySelectorAll(".seg").forEach((seg) => placePill(seg, true));
   $view.querySelectorAll(".seg").forEach((seg) => seg.querySelectorAll("button").forEach((b) => {
     b.onclick = () => {
       const raw = b.dataset.v, k = seg.dataset.k;
@@ -527,7 +556,8 @@ function renderSettings() {
       save({ [k]: v }, false);
     };
   });
-  $view.querySelector("#unpair").onclick = async () => {
+  const unpair = $view.querySelector("#unpair");
+  if (unpair) unpair.onclick = async () => {
     const ok = await sheet(t("¿Desconectar este celular?") + " " + t("Para volver a usarlo tendrás que escanear el código otra vez."),
       [{ label: t("Desconectar"), value: true, danger: true }]);
     if (!ok) return;
