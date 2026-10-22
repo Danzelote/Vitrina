@@ -326,10 +326,10 @@ class App:
         entry = self.players.pop(role, None)
         if not entry:
             return
-        _i, p = entry
+        i, p = entry
         if fade and p.audio:
             p.fade_out_and_close()
-            self.dying.append(p)
+            self.dying.append((i, p))      # sigue moviéndose mientras se desvanece el sonido
         else:
             p.close()
 
@@ -343,6 +343,9 @@ class App:
             p = self.player_for(role, i)
             if p and p.has_frame and p.texture is not None:
                 return p.texture, p.frame_alpha(now)
+        for j, p in reversed(self.dying):   # el video que se cierra se ve en movimiento hasta el final
+            if j == i and p.has_frame and p.texture is not None:
+                return p.texture, 1.0
         return None, 0.0
 
     def video_texture(self, i):
@@ -352,12 +355,12 @@ class App:
     def update_players(self, dt, now=None):
         for _role, (_i, p) in list(self.players.items()):
             p.update(dt, now)
-        self.dying = [p for p in self.dying if p.update(dt, now)]
+        self.dying = [(i, p) for i, p in self.dying if p.update(dt, now)]
 
     def close_all_videos(self):
         for role in list(self.players):
             self.stop_video(role, fade=False)
-        for p in self.dying:
+        for _i, p in self.dying:
             p.close()
         self.dying = []
         VID.wait_all()
