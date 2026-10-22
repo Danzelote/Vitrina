@@ -1898,7 +1898,8 @@ class App:
             for tex, px, ww in ((title, xx, w1), (sub, xx + w1 + 6, w2)):
                 tex.alpha = int(255 * name_a)
                 tex.draw(dstrect=(px, wy + 84 + 28, ww, h1))
-        if not sh["sent"] and t > SHUT_SHRINK + SHUT_SPLIT + 0.6:
+        # Dos vueltas completas del logo antes de pedirle a la Mac que se apague.
+        if not sh["sent"] and t > SHUT_SHRINK + SHUT_SPLIT + 2 * SPL.PERIOD:
             sh["sent"] = True
             WIFI.power(sh["action"])
 
