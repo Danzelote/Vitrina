@@ -16,7 +16,12 @@ from pygame._sdl2.video import Texture
 from . import config as C
 from .theme import T
 
-FONT_NAMES = ["helveticaneue", "helvetica", "sfnsdisplay", "inter", "dejavusans", "liberationsans", "arial"]
+import os
+
+FONT_DIR = os.path.join(os.path.dirname(__file__), "fonts")
+INTER = os.path.join(FONT_DIR, "Inter-Regular.ttf")
+INTER_BOLD = os.path.join(FONT_DIR, "Inter-SemiBold.ttf")   # "negrita" = seminegrita, como Apple
+FONT_NAMES = ["inter", "helveticaneue", "helvetica", "dejavusans", "liberationsans", "arial"]  # respaldo
 
 
 class LRU(OrderedDict):
@@ -96,6 +101,7 @@ class Gfx:
         self.backdrops = LRU(8)
         self.grays = LRU(4)
         circ = pygame.Surface((512, 512), pygame.SRCALPHA)
+        circ.fill((255, 255, 255, 0))
         pygame.draw.circle(circ, (255, 255, 255), (256, 256), 256)
         self.circle = self._tex(pygame.transform.smoothscale(circ, (256, 256)))
         self.texts = LRU(200)
@@ -234,9 +240,14 @@ class Gfx:
     # -- texto y píldoras -----------------------------------------------------
 
     def font(self, size, bold=False):
+        """Inter (incluida con la app): se ve igual en cualquier computadora."""
         key = (size, bold)
         if key not in self.fonts:
-            self.fonts[key] = pygame.font.SysFont(FONT_NAMES, size, bold=bold)
+            path = INTER_BOLD if bold else INTER
+            try:
+                self.fonts[key] = pygame.font.Font(path, size)
+            except (OSError, FileNotFoundError):
+                self.fonts[key] = pygame.font.SysFont(FONT_NAMES, size, bold=bold)
         return self.fonts[key]
 
     def text(self, s, size, color=None, bold=False):
@@ -264,6 +275,7 @@ class Gfx:
         tex = self.pills.get_item(key)
         if tex is None:
             surf = pygame.Surface((pw * 2, ph * 2), pygame.SRCALPHA)
+            surf.fill((255, 255, 255, 0))   # transparente pero blanco: orillas sin halo oscuro
             pygame.draw.rect(surf, (255, 255, 255), surf.get_rect(), border_radius=r * 2)
             tex = self._tex(pygame.transform.smoothscale(surf, (pw, ph)))
             self.pills.put(key, tex)
