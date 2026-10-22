@@ -7,6 +7,6 @@ mkdir -p "$FOTOS"
 amixer -q sset Master 80% unmute 2>/dev/null
 amixer -q sset PCM 100% unmute 2>/dev/null
 while true; do
-    /opt/vitrina/venv/bin/python /opt/vitrina/app/main.py --folder "$FOTOS" --fullscreen 2>&1 | logger -t vitrina
+    /opt/vitrina/venv/bin/python -u /opt/vitrina/app/main.py --folder "$FOTOS" --fullscreen 2>&1 | logger -t vitrina
     sleep 1
 done

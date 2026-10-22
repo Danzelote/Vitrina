@@ -2004,6 +2004,10 @@ class App:
             self.hit((left, ry - 8, right - left, 52), lambda now, n=net: self.choose_network(n))
 
     def draw_empty_library(self):
+        with TH.using(TH.DARK):      # el fondo aquí es negro: textos claros
+            self._draw_empty_library()
+
+    def _draw_empty_library(self):
         g = self.gfx
         url = self.web.pair_url() if self.web else None
         qr = self.qr_texture(url) if url else None
