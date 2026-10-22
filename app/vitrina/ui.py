@@ -29,6 +29,7 @@ RANK = {PHOTOS: 0, MONTHS: 1, COLLS: 1, YEARS: 2}
 LEVEL_TIME = 0.75
 SWIPE_TIME = 0.6
 SWIPE_EASE = cubic_bezier(0.32, 0.72, 0.0, 1.0)   # suave al llegar, como en iOS
+SWIPE_UNIT = 28        # puntos que avanza la foto por cada unidad de desplazamiento del trackpad
 GESTURE_GAP = 0.25     # segundos sin eventos de rueda = gesto nuevo
 BAR_H = 72
 
@@ -96,9 +97,9 @@ class App:
         self.coll_filter = None
         self.queue = []
         self.settings_open = False
-        self.swipe = None          # cambio de foto en el visor
-        self.swipe_acc = 0.0
-        self.swipe_gesture = -1.0
+        self.swipe = None          # animación de cambio de foto en el visor
+        self.drag = None           # arrastre con dos dedos en curso (progreso con signo)
+        self.rubber = None         # rebote al arrastrar en la primera o la última foto
         self.hits = []
         self.ui_rects = []
         self.running = True
@@ -238,18 +239,43 @@ class App:
             return
         if self.swipe:
             self.finish_swipe()
+        self.drag = None
         j = self.neighbor(self.morph_i, d)
         if j is None:
             return
-        self.gfx.screen(self.items[j], force=True)
-        self.swipe = (self.morph_i, j, d, Tween((0.0,), (1.0,), SWIPE_TIME, SWIPE_EASE, now))
+        self.animate_swipe(j, d, 0.0, 1.0, SWIPE_TIME, now)
         self.last_move = now
 
+    def animate_swipe(self, j, d, t0, t1, duration, now):
+        self.gfx.screen(self.items[j], force=True)
+        self.swipe = {"a": self.morph_i, "b": j, "d": d, "to": t1,
+                      "tw": Tween((t0,), (t1,), max(duration, 0.12), SWIPE_EASE, now)}
+
     def finish_swipe(self):
-        _a, b, _d, _tw = self.swipe
-        self.swipe = None
-        self.morph_i = self.hero = b
-        self.jump_camera(*self.plane.cell_center(b), self.view_scale())
+        sw, self.swipe = self.swipe, None
+        if sw["to"] >= 1.0:
+            self.morph_i = self.hero = sw["b"]
+            self.jump_camera(*self.plane.cell_center(sw["b"]), self.view_scale())
+
+    def release_drag(self, now):
+        """Al soltar: termina el cambio si se arrastró lo suficiente; si no, regresa."""
+        p, self.drag = self.drag, None
+        d = 1 if p > 0 else -1
+        t = min(abs(p), 1.0)
+        j = self.neighbor(self.morph_i, d)
+        if j is None:
+            if t > 0:
+                self.rubber = Tween((p,), (0.0,), 0.35, SWIPE_EASE, now)
+            return
+        if t > 0.28:
+            self.animate_swipe(j, d, t, 1.0, SWIPE_TIME * (1 - t) + 0.12, now)
+        elif t > 0:
+            self.animate_swipe(j, d, t, 0.0, 0.3, now)
+
+    def current_viewer_index(self):
+        if self.swipe and self.swipe["to"] >= 1.0:
+            return self.swipe["b"]
+        return self.morph_i
 
     def viewer_rect(self, i):
         s = self.view_scale()
@@ -511,21 +537,22 @@ class App:
             self.zoom(-1, now, from_wheel=True)
 
     def on_swipe(self, dx, now):
-        """Deslizar con dos dedos en el visor: una foto por gesto."""
-        if now - self.wheel_last > GESTURE_GAP:
-            self.gesture_start = now
-            self.swipe_acc = 0.0
+        """Arrastre con dos dedos en el visor: la foto sigue a los dedos y al
+        soltar termina el cambio o regresa."""
         self.wheel_last = now
         self.last_move = now
-        if self.swipe_gesture == self.gesture_start or dx == 0:
+        if dx == 0 or self.m_tween:
             return
-        if self.swipe_acc * dx < 0:
-            self.swipe_acc = 0.0
-        self.swipe_acc += dx * self.zoom_sign
-        if abs(self.swipe_acc) >= 1.5:
-            self.viewer_step(1 if self.swipe_acc > 0 else -1, now)
-            self.swipe_acc = 0.0
-            self.swipe_gesture = self.gesture_start
+        if self.swipe:
+            return  # deja terminar la animación anterior
+        if self.drag is None:
+            self.drag = 0.0
+            self.rubber = None
+        step = dx * self.zoom_sign * SWIPE_UNIT / (0.28 * self.vw)
+        p = self.drag + step
+        if self.neighbor(self.morph_i, 1 if p > 0 else -1) is None:
+            p = self.drag + step * 0.3  # resistencia en la primera y la última
+        self.drag = max(-1.0, min(1.0, p))
 
     def on_click(self, now):
         self.last_move = now
@@ -572,8 +599,12 @@ class App:
                 self.m_tween = None
         if self.lvl_tween and self.lvl_tween.done(now):
             self.lvl_tween = None
-        if self.swipe and self.swipe[3].done(now):
+        if self.swipe and self.swipe["tw"].done(now):
             self.finish_swipe()
+        if self.drag is not None and now - self.wheel_last > 0.12:
+            self.release_drag(now)
+        if self.rubber and self.rubber.done(now):
+            self.rubber = None
 
         over_ui = any(inside(r, self.mx, self.my) for r in self.ui_rects)
         can_hover = self.mode == GRID and self.inside and not over_ui and not self.settings_open
@@ -656,7 +687,7 @@ class App:
             others = (1.0 - self.m) if self.big_kind in (FRAME, VIEWER) else 1.0
             if others * alpha > 0.003:
                 self.draw_tiles(tx, ty, s, others * alpha, bg)
-            if self.swipe:
+            if self.swipe or self.drag is not None or self.rubber:
                 self.draw_swipe(now, bg)
             elif self.lvl == PHOTOS and not self.lvl_tween:
                 self.draw_morph(tx, ty, s, bg)
@@ -728,10 +759,20 @@ class App:
     def draw_swipe(self, now, bg):
         """La foto que se va se desliza un poco, se achica y se desvanece; la que
         llega entra desde el otro lado al mismo tiempo."""
-        a, b, d, tw = self.swipe
-        t = tw.value(now)[0]
-        dist = 0.28 * self.vw
         radius = C.RADIUS_VIEW * self.view_scale()
+        if self.swipe:
+            a, b, d = self.swipe["a"], self.swipe["b"], self.swipe["d"]
+            t = self.swipe["tw"].value(now)[0]
+        else:
+            p = self.drag if self.drag is not None else self.rubber.value(now)[0]
+            a, d = self.morph_i, (1 if p > 0 else -1)
+            b = self.neighbor(a, d)
+            t = abs(p)
+            if b is None:  # sin foto de ese lado: solo un pequeño desplazamiento
+                x, y, w, h = self.viewer_rect(a)
+                self.draw_tile(self.items[a], x - p * 0.28 * self.vw, y, w, h, 1.0, radius, bg, True)
+                return
+        dist = 0.28 * self.vw
         out_a = max(0.0, 1.0 - t / 0.55)        # la que se va desaparece pronto...
         in_a = min(1.0, max(0.0, (t - 0.15) / 0.7))  # ...y la nueva aparece casi encima
         for i, off, k, alpha in ((a, -d * t * dist, 1.0 - 0.05 * t, out_a),
@@ -879,7 +920,7 @@ class App:
     def draw_viewer_chrome(self, now):
         g = self.gfx
         a = self.m
-        sel = self.items[self.swipe[1] if self.swipe else self.morph_i]
+        sel = self.items[self.current_viewer_index()]
         sub = f"· {sel.collection}" if sel.collection else None
         g.pill(sel.date_text, self.vw / 2, self.vh - 66, 14, a, sublabel=sub)
         r = g.pill("‹  Volver", 24, 24, 14, a, anchor="left")
@@ -887,8 +928,8 @@ class App:
         label = "Presentación desde aquí"
         w = g.tsize(g.text(label, 14, C.TEXT, True))[0] + 36 + 22
         r2 = g.button(label, self.vw - 24 - w, 24, h=40, alpha=a, icon="play")
-        self.hit(r2, lambda now: self.go_frame(self.swipe[1] if self.swipe else self.morph_i, now))
-        cur = self.swipe[1] if self.swipe else self.morph_i
+        self.hit(r2, lambda now: self.go_frame(self.current_viewer_index(), now))
+        cur = self.current_viewer_index()
         for d, x in ((-1, 24), (1, self.vw - 24 - 48)):
             if self.neighbor(cur, d) is None:
                 continue

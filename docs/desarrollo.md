@@ -48,7 +48,8 @@ La primera vez con una carpeta nueva, Vitrina prepara las miniaturas en segundo 
 | Ajustes | Tiempo de reposo, fecha y lugar, orden aleatorio |
 | `+` / `-` | Zoom hacia el centro |
 | Clic en una foto | La abre en el visor |
-| En el visor: deslizar con dos dedos, flechas ← → o los botones laterales | Foto anterior o siguiente (respeta el filtro de colección) |
+| En el visor: arrastrar con dos dedos | La foto sigue a los dedos; al soltar cambia de foto si avanzaste lo suficiente, o regresa |
+| En el visor: flechas ← → o los botones laterales | Foto anterior o siguiente (respeta el filtro de colección) |
 | Clic en el visor o `Esc` | Regresa a la cuadrícula |
 | `Esc` en meses, años o colecciones | Entra un nivel |
 | `Esc` en la cuadrícula | Regresa a la presentación |
