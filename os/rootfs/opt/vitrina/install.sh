@@ -97,7 +97,8 @@ install_to() {
     esp=$(part "$disk" 1)
     root=$(part "$disk" 2)
     run mkfs.vfat -F 32 -n EFI "$esp" || die "No se pudo formatear la partición de arranque"
-    run mkfs.ext4 -F -q -L vitrina "$root" || die "No se pudo formatear el disco"
+    # Sin las funciones nuevas de ext4 que el arranque (GRUB) todavía no sabe leer.
+    run mkfs.ext4 -F -q -L vitrina -O ^orphan_file,^metadata_csum_seed "$root" || die "No se pudo formatear el disco"
     mkdir -p "$TARGET" "$SQ"
     run mount "$root" "$TARGET" || die "No se pudo abrir el disco nuevo"
 
@@ -119,18 +120,21 @@ install_to() {
 UUID=$uuid  /          ext4  noatime,errors=remount-ro  0 1
 UUID=$espuuid  /boot/efi  vfat  umask=0077,noauto,nofail  0 2
 EOF
-    cat >"$TARGET/boot/grub/grub.cfg" <<EOF
+    echo "Vitrina $(cat "$MEDIUM/live/vitrina.id" 2>/dev/null) · $kver · $(date -u +%F)" >"$TARGET/etc/vitrina-instalada"
+    run mount "$esp" "$TARGET/boot/efi" || die "No se pudo abrir la partición de arranque"
+    # El kernel y la configuración del arranque van en la partición EFI (FAT):
+    # así GRUB no necesita leer ext4.
+    mkdir -p "$TARGET/boot/efi/EFI/BOOT" "$TARGET/boot/efi/EFI/vitrina"
+    cp "$TARGET/boot/vmlinuz" "$TARGET/boot/initrd.img" "$TARGET/boot/efi/EFI/vitrina/" \
+        || die "No se pudo copiar el kernel al arranque"
+    cat >"$TARGET/boot/efi/EFI/vitrina/grub.cfg" <<EOF
 # Sin menú (en algunas Macs con NVIDIA el menú queda invisible).
 set timeout=0
 set timeout_style=hidden
-search --no-floppy --fs-uuid --set=root $uuid
-linux /boot/vmlinuz root=UUID=$uuid ro quiet splash loglevel=0 rd.udev.log_level=3 udev.log_level=3 vt.global_cursor_default=0 systemd.show_status=0 rd.systemd.show_status=0 $extra
-initrd /boot/initrd.img
+linux (\$root)/EFI/vitrina/vmlinuz root=UUID=$uuid ro quiet splash loglevel=0 rd.udev.log_level=3 udev.log_level=3 vt.global_cursor_default=0 systemd.show_status=0 rd.systemd.show_status=0 $extra
+initrd (\$root)/EFI/vitrina/initrd.img
 boot
 EOF
-    echo "Vitrina $(cat "$MEDIUM/live/vitrina.id" 2>/dev/null) · $kver · $(date -u +%F)" >"$TARGET/etc/vitrina-instalada"
-    run mount "$esp" "$TARGET/boot/efi" || die "No se pudo abrir la partición de arranque"
-    mkdir -p "$TARGET/boot/efi/EFI/BOOT"
     cp "$MEDIUM/instalar/BOOTX64.EFI" "$MEDIUM/instalar/BOOTIA32.EFI" "$TARGET/boot/efi/EFI/BOOT/" \
         || die "No se pudo copiar el arranque"
     # Las Mac arrancan solas con /EFI/BOOT (sin tocar su memoria NVRAM). En otras
