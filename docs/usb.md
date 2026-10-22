@@ -4,7 +4,7 @@ La imagen de la USB arranca la Mac directo en Vitrina: sin escritorio, sin menú
 
 ## Lo que necesitas
 
-- Una memoria USB de **4 GB o más**. Se borra por completo.
+- Una memoria USB de **1 GB o más** (la imagen pesa unos 450 MB). Se borra por completo.
 - La imagen `vitrina-….iso`, de la sección [Releases](https://github.com/Danzelote/Vitrina/releases) del proyecto.
 - [balenaEtcher](https://etcher.balena.io), para grabarla (Mac, Windows o Linux).
 
