@@ -30,6 +30,7 @@ from . import wifi as WIFI  # noqa: E402
 from . import qrscan as QR  # noqa: E402
 from . import splash as SPL  # noqa: E402
 from . import installer as INST  # noqa: E402
+from . import ambient as AMB  # noqa: E402
 from . import config as C  # noqa: E402
 from . import levels as LV  # noqa: E402
 from . import video as VID  # noqa: E402
@@ -3040,6 +3041,9 @@ class App:
 
     def _draw_empty_library(self):
         g = self.gfx
+        if not hasattr(self, "ambient"):
+            self.ambient = AMB.Ambient()
+        self.ambient.draw(self.ren, self.vw, self.vh, g.dt)     # ventanas borrosas que se asoman
         url = self.web.pair_url() if self.web else None
         qr = self.qr_texture(url) if url else None
         if qr:
