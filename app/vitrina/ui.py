@@ -45,8 +45,6 @@ GESTURE_GAP = 0.25     # segundos sin eventos de rueda = gesto nuevo
 SETTINGS_IN = 0.38     # Ajustes aparece...
 SETTINGS_OUT = 0.24    # ...y se va un poco más rápido
 THEME_TIME = 0.7       # cambio gradual entre tema claro y oscuro
-WAKE_ZOOM_TIME = 1.3   # al despertar el reloj ventana, se "entra" por uno de sus puntos
-WAKE_ZOOM_EASE = cubic_bezier(0.55, 0.0, 0.35, 1.0)
 BAR_H = 72
 
 
@@ -157,7 +155,6 @@ class App:
         self.sleeping = False
         self.sensor = NIGHT.LightSensor()
         self.glyphs = NC.Glyphs(self.ren)
-        self.wake_zoom = None       # animación de "entrar al reloj" al despertar
         self.backlight = NIGHT.Backlight()
         self.hits = []
         self.ui_rects = []
@@ -687,14 +684,10 @@ class App:
             self.last_input = now
             if self.dark or self.night > 0.001:
                 self.woke = True
-            if self.night > 0.5 or self.wake_zoom:
+            if self.night > 0.5:
                 # La pantalla está apagada (o casi): el primer toque solo la despierta.
                 if e.type == pygame.MOUSEMOTION:
                     self.mx, self.my = e.pos
-                if (self.settings.night_style == "window" and self.mode == FRAME
-                        and not self.wake_zoom and self.night > 0.5):
-                    self.wake_zoom = Tween((0.0,), (1.0,), WAKE_ZOOM_TIME, WAKE_ZOOM_EASE, now)
-                    self.night = 0.0
                 self.frame_anchor = None
                 self.frame_since = now
                 return
@@ -762,7 +755,7 @@ class App:
         self.inside = True
         self.last_move = now
         if self.mode == FRAME:
-            if self.wake_zoom or now - self.frame_since < C.FRAME_MOVE_GRACE:
+            if now - self.frame_since < C.FRAME_MOVE_GRACE:
                 return
             if self.frame_anchor is None:
                 self.frame_anchor = (x, y)
@@ -1059,7 +1052,7 @@ class App:
         self.hits = []
         self.ui_rects = []
         amt = self.settings_amt if self.items else 0.0
-        if self.night >= 0.999 and not self.wake_zoom and amt <= 0.001 and self.items:
+        if self.night >= 0.999 and amt <= 0.001 and self.items:
             # Noche completa: solo el reloj sobre negro (la escena no se ve).
             self.ren.draw_color = (0, 0, 0, 255)
             self.ren.clear()
@@ -1097,12 +1090,12 @@ class App:
             self.offscreen_tex[name] = tex
         return tex
 
-    def blurred(self, scene):
-        """Desenfoque barato: la escena se reduce a la mitad cuatro veces
+    def blurred(self, scene, name="blur", steps=4):
+        """Desenfoque barato: la escena se reduce a la mitad varias veces
         (cada paso promedia píxeles) y luego se estira suave."""
         src = scene
-        for k in range(1, 5):
-            dst = self.offscreen(f"blur{k}", pygame.BLENDMODE_NONE, 2 ** k)
+        for k in range(1, steps + 1):
+            dst = self.offscreen(f"{name}{k}", pygame.BLENDMODE_NONE, 2 ** k)
             self.ren.target = dst
             src.alpha = 255
             src.draw(dstrect=(0, 0, dst.width, dst.height))
@@ -1396,51 +1389,28 @@ class App:
 
     def draw_night(self, now):
         st = self.settings
-        if self.wake_zoom:
-            e = self.wake_zoom.value(now)[0]
-            if self.wake_zoom.done(now):
-                self.wake_zoom = None
-            else:
-                self.draw_window_clock(now, 1.0, e)
-            return
         n = self.night
         if n <= 0.001:
             return
         g = self.gfx
         if st.night_style == "window" and self.items:
-            self.draw_window_clock(now, n, 0.0)
+            self.draw_window_clock(now, n)
             return
         g.rect(0, 0, self.vw, self.vh, (0, 0, 0), min(1.0, n))
         if st.night_style == "classic":
             NC.draw_classic(g, self.glyphs, NC.time_text(st.clock), self.vw, self.vh, g.dpi,
                             st.night_color, n * 0.9, (self.drift[0] * 3, self.drift[1] * 3))
 
-    def draw_window_clock(self, now, amount, zoom):
+    def draw_window_clock(self, now, amount):
         """Reloj ventana: negro, y por dentro de los números la presentación,
-        tenue y con poco color. `zoom` 0..1 es la animación de entrar por el
-        punto de arriba de los dos puntos hasta que la foto llena la pantalla."""
+        desenfocada, tenue y con poco color (para que no distraiga)."""
         g, st = self.gfx, self.settings
-        parts, dot = NC.window_layout(self.glyphs, NC.time_text(st.clock), self.vw, self.vh, g.dpi)
+        parts, _dot = NC.window_layout(self.glyphs, NC.time_text(st.clock), self.vw, self.vh, g.dpi)
         dx, dy = self.drift[0] * 3, self.drift[1] * 3
         parts = [(t, x + dx, y + dy, w, h) for t, x, y, w, h in parts]
-        dot = (dot[0] + dx, dot[1] + dy)
-        scale = 1.0
-        if zoom > 0:
-            r = parts[0][3] * 0.1 + 1
-            r = next((w / 2 for t, x, y, w, h in parts if t is None), r)
-            far = max(((cx - dot[0]) ** 2 + (cy - dot[1]) ** 2) ** 0.5
-                      for cx in (0, self.vw) for cy in (0, self.vh))
-            scale = (far / r * 1.1) ** zoom
-        # 1) La forma de los números, en blanco sobre negro.
-        mask = self.offscreen("nightmask", pygame.BLENDMODE_MOD)
-        self.ren.target = mask
-        self.ren.logical_size = (self.vw, self.vh)
-        self.ren.draw_color = (0, 0, 0, 255)
-        self.ren.clear()
-        NC.draw_window_mask(g, parts, scale, dot)
-        # 2) La presentación, tenue y casi en blanco y negro.
-        win = self.offscreen("nightwin", pygame.BLENDMODE_BLEND)
-        self.ren.target = win
+        # 1) La presentación, casi en blanco y negro.
+        scene = self.offscreen("nightscene", pygame.BLENDMODE_NONE)
+        self.ren.target = scene
         self.ren.logical_size = (self.vw, self.vh)
         self.ren.draw_color = (0, 0, 0, 255)
         self.ren.clear()
@@ -1448,8 +1418,7 @@ class App:
         self.draw_scene(now)
         del self.hits[n_hits:]
         del self.ui_rects[n_rects:]
-        gray_amt = 0.6 * (1 - zoom)
-        if self.mode == FRAME and gray_amt > 0.01:
+        if self.mode == FRAME:
             shown = [(self.hero, 1.0)]
             if self.fade:
                 shown.append((self.fade[0], self.fade[1].value(now)[0]))
@@ -1457,11 +1426,26 @@ class App:
                 item = self.items[i]
                 tex = None if item.is_video else g.gray(item)
                 if tex is not None:
-                    g.image(tex, *self.kb_rect(i, self.frame_rect(item), now), alpha=gray_amt * a, snap=False)
-        bright = lerp(0.65, 1.0, zoom)
-        if bright < 0.999:
-            g.rect(0, 0, self.vw, self.vh, (0, 0, 0), 1 - bright)
+                    g.image(tex, *self.kb_rect(i, self.frame_rect(item), now), alpha=0.6 * a, snap=False)
+        self.ren.target = None
+        # 2) Desenfocada y tenue.
+        blur = self.blurred(scene, "nightblur", 3)
+        win = self.offscreen("nightwin", pygame.BLENDMODE_BLEND)
+        self.ren.target = win
+        self.ren.logical_size = (self.vw, self.vh)
+        blur.blend_mode = pygame.BLENDMODE_NONE
+        blur.alpha = 255
+        blur.draw(dstrect=(0, 0, self.vw, self.vh))
+        g.rect(0, 0, self.vw, self.vh, (0, 0, 0), 0.35)
         # 3) Se recorta con la forma de los números.
+        mask = self.offscreen("nightmask", pygame.BLENDMODE_MOD)
+        self.ren.target = mask
+        self.ren.logical_size = (self.vw, self.vh)
+        self.ren.draw_color = (0, 0, 0, 255)
+        self.ren.clear()
+        NC.draw_window_mask(g, parts)
+        self.ren.target = win
+        self.ren.logical_size = (self.vw, self.vh)
         mask.alpha = 255
         mask.draw(dstrect=(0, 0, self.vw, self.vh))
         self.ren.target = None
@@ -1709,7 +1693,7 @@ class App:
             self.step()
             if self.sleeping:
                 fps = 5                 # apagada: casi sin gastar
-            elif self.night >= 0.999 and not self.wake_zoom:
+            elif self.night >= 0.999:
                 fps = 24 if self.settings.night_style == "window" else 4
             else:
                 fps = 60
