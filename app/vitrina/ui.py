@@ -145,7 +145,8 @@ class App:
         self.players = {}          # papel -> (índice, Player)
         self.dying = []            # reproductores bajando el volumen antes de cerrarse
         self.hover_since = 0.0
-        self.swipe = None          # animación de cambio de foto en el visor
+        self.swipe = None          # animación de cambio de foto en el visor (arrastre)
+        self.glide = None          # cambio de foto con flechas: una tira que se desliza (ver viewer_step)
         self.drag = None           # arrastre con dos dedos en curso (progreso con signo)
         self.rubber = None         # rebote al arrastrar en la primera o la última foto
         self.drag_vis = 0.0        # posición dibujada (sigue a self.drag suavemente)
@@ -472,20 +473,108 @@ class App:
         return None
 
     def viewer_step(self, d, now):
+        """Flechas (o deslizar) en el visor: las fotos son una tira que se
+        desliza con un resorte. Si se presiona varias veces seguidas, la tira
+        acelera hacia la foto pedida sin regresar a la que iba; si se cambia de
+        dirección, da la vuelta suave desde donde está."""
         if self.mode != VIEWER or self.m_tween:
             return
         self.keys_drove = True
         if self.swipe:
             self.finish_swipe()
         self.drag = None
-        j = self.neighbor(self.morph_i, d)
-        if j is None:
+        gl = self.glide
+        if gl is None:
+            gl = self.glide = {"items": {0: self.morph_i}, "off": 0.0, "vel": 0.0, "target": 0}
+            self.stop_video("view")
+            self.stop_video("view_next", fade=False)
+        target = gl["target"] + d
+        if self.glide_item(target) is None:
+            if gl["target"] == 0 and gl["off"] == 0.0 and gl["vel"] == 0.0:
+                self.glide = None            # no hay más fotos de ese lado
             return
-        self.stop_video("view")
-        # Si llega un video, se prepara en pausa mientras dura la animación.
-        self.start_video("view_next", j, audio=True, start_paused=True)
-        self.animate_swipe(j, d, 0.0, 1.0, SWIPE_TIME, now)
+        gl["target"] = target
+        self.gfx.screen(self.items[self.glide_item(target)], force=True)
         self.last_move = now
+
+    def glide_item(self, j):
+        """La foto en la posición j de la tira (0 = donde empezó), o None."""
+        gl = self.glide
+        items = gl["items"]
+        if j in items:
+            return items[j]
+        step = 1 if j > 0 else -1
+        k = 0
+        while k != j:
+            nxt = k + step
+            if nxt not in items:
+                cur = items[k]
+                n = self.neighbor(cur, step) if cur is not None else None
+                items[nxt] = n
+                if n is None:
+                    return None
+            if items[nxt] is None:
+                return None
+            k = nxt
+        return items[j]
+
+    def glide_x(self, j):
+        """Posición horizontal de la foto j en la tira (la 0 está en 0)."""
+        x, step, k = 0.0, (1 if j > 0 else -1), 0
+        while k != j:
+            a, b = self.glide_item(k), self.glide_item(k + step)
+            if a is None or b is None:
+                break
+            x += step * self.page_width(a, b)
+            k += step
+        return x
+
+    def update_glide(self, dt, now):
+        gl = self.glide
+        if not gl:
+            return
+        # Resorte sin rebote: rápido cuando falta mucho, suave al llegar.
+        w = 2 * math.pi / 0.55
+        diff = gl["target"] - gl["off"]
+        acc = w * w * diff - 2 * w * gl["vel"]
+        gl["vel"] += acc * min(dt, 0.05)
+        gl["off"] += gl["vel"] * min(dt, 0.05)
+        if abs(diff) < 0.002 and abs(gl["vel"]) < 0.02:
+            self.finish_glide()
+
+    def finish_glide(self):
+        gl = self.glide
+        j = round(gl["off"]) if abs(gl["off"] - gl["target"]) > 0.5 else gl["target"]
+        i = self.glide_item(j)
+        self.glide = None
+        if i is None:
+            i = gl["items"][0]
+        self.morph_i = self.hero = i
+        self.jump_camera(*self.plane.cell_center(i), self.view_scale())
+        if self.mode == VIEWER:
+            self.start_video("view", i, audio=True)
+
+    def draw_glide(self, bg):
+        gl = self.glide
+        radius = C.RADIUS_VIEW * self.view_scale()
+        off = gl["off"]
+        lo = math.floor(off)
+        x_lo = self.glide_x(lo)
+        x_hi = self.glide_x(lo + 1) if self.glide_item(lo + 1) is not None else x_lo
+        x_now = lerp(x_lo, x_hi, off - lo)
+        for j in range(lo - 1, lo + 3):
+            i = self.glide_item(j)
+            if i is None:
+                continue
+            dist = abs(j - off)
+            alpha = max(0.0, 1.0 - dist)          # como antes: la que sale se desvanece
+            if alpha <= 0.01:
+                continue
+            x, y, w, h = self.viewer_rect(i)
+            dx = self.glide_x(j) - x_now
+            if x + dx + w < 0 or x + dx > self.vw:
+                continue
+            self.draw_tile(self.items[i], x + dx, y, w, h, alpha, radius, bg, True, idx=i)
 
     def animate_swipe(self, j, d, t0, t1, duration, now):
         self.gfx.screen(self.items[j], force=True)
@@ -535,6 +624,9 @@ class App:
         return (wa + wb) / 2 + 60
 
     def current_viewer_index(self):
+        if self.glide:
+            i = self.glide_item(round(self.glide["off"]))
+            return i if i is not None else self.morph_i
         if self.swipe and self.swipe["to"] >= 1.0:
             return self.swipe["b"]
         return self.morph_i
@@ -557,6 +649,10 @@ class App:
     def close_viewer(self, now):
         if self.swipe:
             self.finish_swipe()
+        if self.glide:                      # se cierra en la foto que se está viendo
+            self.glide["target"] = round(self.glide["off"])
+            self.glide["off"] = float(self.glide["target"])
+            self.finish_glide()
         self.stop_video("view")   # el sonido se desvanece mientras la foto regresa
         self.stop_video("view_next", fade=False)
         self.mode = GRID
@@ -1322,6 +1418,7 @@ class App:
             self.lvl_tween = None
         if self.swipe and self.swipe["tw"].done(now):
             self.finish_swipe()
+        self.update_glide(dt, now)
         if self.drag is not None:
             prev = self.drag_vis
             self.drag_vis += (self.drag - self.drag_vis) * (1 - math.exp(-dt / 0.035))
@@ -1387,7 +1484,7 @@ class App:
         vp = self.player_for("view", self.morph_i)
         if self.mode == VIEWER and vp and vp.is_playing:
             self.last_move = now   # no regresa a la presentación mientras se ve un video
-        if self.mode == VIEWER and not self.swipe:
+        if self.mode == VIEWER and not self.swipe and not self.glide:
             for d in (1, -1):
                 j = self.neighbor(self.morph_i, d)
                 if j is not None:
@@ -2210,7 +2307,9 @@ class App:
             others = (1.0 - self.m) if self.big_kind in (FRAME, VIEWER) else 1.0
             if others * alpha > 0.003:
                 self.draw_tiles(tx, ty, s, others * alpha, bg)
-            if self.swipe or self.drag is not None or self.rubber:
+            if self.glide:
+                self.draw_glide(bg)
+            elif self.swipe or self.drag is not None or self.rubber:
                 self.draw_swipe(now, bg)
             elif self.lvl == PHOTOS and not self.lvl_tween:
                 self.draw_morph(tx, ty, s, bg)
@@ -2693,7 +2792,7 @@ class App:
         if a <= 0.01:
             return
         vp = self.player_for("view", self.morph_i)
-        if vp and not self.swipe:
+        if vp and not self.swipe and not self.glide:
             self.draw_video_controls(vp, a)
         sel = self.items[self.current_viewer_index()]
         where = place_of(sel) or sel.collection
