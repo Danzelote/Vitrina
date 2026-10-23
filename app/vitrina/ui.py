@@ -9,6 +9,8 @@ import math
 import os
 import queue
 import random
+import subprocess
+import threading
 import time
 from datetime import date, datetime
 
@@ -219,11 +221,17 @@ class App:
         self.intro = {"start": splash.start if splash else now, "phase": "load"}
         self.shutting = None        # apagando o reiniciando: solo el logo
         self.lock_hold, self.lock_fired = None, False
+        self.keys_down = set()
         self.started_at = time.monotonic()
         self.lock_hint_at = self.lock_changed_at = -1e9
         self.inst = None            # instalar en esta Mac: {"stage", "at", "ins", "disk"}
         self.updater = UPD.Updater()   # actualizar la Vitrina instalada desde GitHub
         self.usb = USBI.UsbImport(self) if lib else None   # importar fotos de una memoria USB
+        if WIFI.SYSTEM and UPD.available():
+            # Pantalla de arranque de la Mac en negro (en vez de gris): ver install.sh boot-black.
+            threading.Thread(target=lambda: print("Arranque negro:", subprocess.run(
+                ["sudo", "-n", "/opt/vitrina/install.sh", "boot-black"], capture_output=True, text=True,
+                stdin=subprocess.DEVNULL, timeout=15).stdout.strip(), flush=True), daemon=True).start()
         self.update_done_at = None
         self.help_open = False      # lista de atajos de teclado (tecla H)
         self.help_at = 0.0
@@ -934,6 +942,13 @@ class App:
     def handle(self, e, now):
         if self.debug_input:
             self.debug_event(e)
+        # Teclas presionadas ahora (para Control + L): se lleva la cuenta con los eventos.
+        if e.type == pygame.KEYDOWN:
+            self.keys_down.add(e.key)
+        elif e.type == pygame.KEYUP:
+            self.keys_down.discard(e.key)
+        elif e.type in (pygame.WINDOWFOCUSLOST, pygame.WINDOWLEAVE):
+            self.keys_down.clear()
         if self.settings.locked and e.type != pygame.QUIT:
             # Teclado bloqueado (para los gatos): nada cuenta; solo se avisa cómo desbloquear.
             if e.type in (pygame.KEYDOWN, pygame.MOUSEBUTTONDOWN, pygame.MOUSEWHEEL, pygame.FINGERDOWN):
@@ -1146,9 +1161,9 @@ class App:
     def update_lock(self, now):
         """Mantener solo Control + L durante 3 s bloquea o desbloquea el teclado.
         Si hay más teclas presionadas (un gato acostado), no cuenta."""
-        keys = pygame.key.get_pressed()
-        ctrl = keys[pygame.K_LCTRL] or keys[pygame.K_RCTRL]
-        holding = ctrl and keys[pygame.K_l] and sum(1 for k in range(len(keys)) if keys[k]) == 2
+        down = self.keys_down
+        ctrl = pygame.K_LCTRL in down or pygame.K_RCTRL in down
+        holding = ctrl and pygame.K_l in down and len(down) == 2
         if not holding:
             self.lock_hold = None
             self.lock_fired = False

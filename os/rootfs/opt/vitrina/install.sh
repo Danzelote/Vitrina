@@ -270,8 +270,26 @@ usb_umount() {
     echo "OK"
 }
 
+# -- Pantalla de arranque negra en vez de gris (Mac) -----------------------------------
+# Las Mac leen la variable DefaultBackgroundColor de su memoria NVRAM para el color
+# de la pantalla al prender. Se pone en negro (como hace macOS en las Mac nuevas).
+# Se deshace con el reinicio de NVRAM (⌘ ⌥ P R al prender). Algunas Mac viejas la ignoran.
+boot_black() {
+    grep -qi apple /sys/class/dmi/id/sys_vendor 2>/dev/null || { echo "NO_MAC"; return 0; }
+    local dir=/sys/firmware/efi/efivars
+    [ -d "$dir" ] || { echo "SIN_EFI"; return 0; }
+    mountpoint -q "$dir" || mount -t efivarfs efivarfs "$dir" 2>/dev/null
+    local var=$dir/DefaultBackgroundColor-4d1ede05-38c7-4a6a-9cc6-4bcca8b38c14
+    if [ -f "$var" ] && [ "$(od -An -tx1 -j4 "$var" | tr -d ' \n')" = 000000 ]; then
+        echo "YA"; return 0
+    fi
+    [ -f "$var" ] && chattr -i "$var" 2>/dev/null
+    if printf '\x07\x00\x00\x00\x00\x00\x00' >"$var" 2>/dev/null; then echo "OK"; else echo "ERROR"; fi
+}
+
 case "${1:-}" in
     detect) detect ;;
+    boot-black) boot_black ;;
     usb-list) usb_list ;;
     usb-mount) [ -n "${2:-}" ] && usb_mount "$2" ;;
     usb-umount) [ -n "${2:-}" ] && usb_umount "$2" ;;
