@@ -38,7 +38,7 @@ No hace falta presionar nada más: la imagen arranca sola, sin el menú invisibl
 Cuando ya probaste que todo funciona desde la USB:
 
 1. **Ajustes → Pantalla → Instalar en esta Mac…**
-2. Revisa el disco que encontró y lee el aviso: **se borra todo el disco** (macOS, programas y archivos). Si quieres conservar algo de esa Mac, sácalo antes.
+2. Revisa el disco que encontró y lee el aviso: **se borra macOS** con sus programas y archivos. Si quieres conservar algo de esa Mac, sácalo antes. La **recuperación de macOS** (⌘R al prender) se conserva, por si algún día quieres volver a instalarlo; en un disco sin ella se usa el disco completo.
 3. **Continuar** → espera la cuenta atrás → **Borrar e instalar**. Tarda unos minutos; no apagues la Mac ni quites la USB.
 4. Al terminar: quita la USB y **Reiniciar**. Vitrina arranca sola desde el disco.
 

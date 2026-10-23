@@ -1744,17 +1744,23 @@ class App:
             elif not ins.disks:
                 body.append((tr("No se encontró un disco interno donde instalar."), 14, red, True))
             else:
-                dev, size, model = ins.disks[0]
+                dev, size, model, keep = ins.disks[0]
                 it["disk"] = ins.disks[0]
                 body.append((tr("Disco: {m} · {s}", m=model or dev, s=INST.human_size(size)), 14, T.text, True))
-                body.append((tr("Se borrará TODO lo que tiene este disco: macOS, programas, documentos y fotos. "
-                                "No se puede deshacer."), 14, red, True))
+                if keep:
+                    body.append((tr("Se borrará macOS con todos sus programas, documentos y fotos. "
+                                    "No se puede deshacer."), 14, red, True))
+                    body.append((tr("Se conserva la recuperación de macOS (⌘R al prender) por si algún día "
+                                    "quieres volver a instalarlo."), 13, T.text_secondary, False))
+                else:
+                    body.append((tr("Se borrará TODO lo que tiene este disco: macOS, programas, documentos y fotos. "
+                                    "No se puede deshacer."), 14, red, True))
             buttons.append((tr("Cancelar"), "close", "normal"))
             if ins.disks:
                 buttons.append((tr("Continuar"), "confirm", "active"))
         elif stage == "confirm":
             title = tr("¿Borrar el disco e instalar?")
-            dev, size, model = it["disk"]
+            dev, size, model, _keep = it["disk"]
             body.append((tr("Último aviso: se borrará {m} ({s}) y no habrá forma de recuperar lo que tiene.",
                             m=model or dev, s=INST.human_size(size)), 14, T.text_secondary, False))
             body.append((tr("Deja la Mac conectada a la corriente. Tarda unos minutos."), 14, T.text_secondary, False))

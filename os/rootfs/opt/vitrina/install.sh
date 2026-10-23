@@ -51,8 +51,38 @@ detect() {
         echo "$skip" | grep -qx "$NAME" && continue
         [ "$TRAN" = usb ] && continue
         [ "${SIZE:-0}" -ge 4000000000 ] || continue
-        echo "DISK $NAME $SIZE ${MODEL:-Disco}"
+        local mode=todo
+        [ -n "$(keep_plan "$NAME")" ] && mode=conservar
+        echo "DISK $NAME $SIZE $mode ${MODEL:-Disco}"
     done < <(lsblk -dbnpP -o NAME,TYPE,RM,SIZE,TRAN,MODEL 2>/dev/null)
+}
+
+# Tipos de partición (GPT) que importan
+GUID_EFI=c12a7328-f81f-11d2-ba4b-00a0c93ec93b
+GUID_APPLE_BOOT=426f6f74-0000-11aa-aa11-00306543ecac       # "Recovery HD" de macOS
+GUID_HFS=48465300-0000-11aa-aa11-00306543ecac
+GUID_CORESTORAGE=53746f72-6167-11aa-aa11-00306543ecac
+GUID_APFS=7c3457ef-0000-11aa-aa11-00306543ecac
+GUID_LINUX=0fc63daf-8483-4772-8e79-3d69d8477de4             # una Vitrina instalada antes
+
+# Si el disco tiene la recuperación de macOS, se conserva: solo se reemplaza la
+# partición de macOS y se usa la partición EFI que ya existe.
+#   → "<esp> <partición de macOS>"  (vacío si no aplica)
+keep_plan() {
+    local disk=$1 esp="" big="" bigsize=0 recovery=0 name type size label
+    while read -r name type size label; do
+        [ "$name" = "$disk" ] && continue
+        case "${type,,}" in
+            $GUID_EFI) [ -z "$esp" ] && esp=$name ;;
+            $GUID_APPLE_BOOT) recovery=1 ;;
+            $GUID_HFS|$GUID_CORESTORAGE|$GUID_APFS|$GUID_LINUX)
+                [ "${type,,}" = "$GUID_LINUX" ] && [ "$label" != Vitrina ] && continue
+                if [ "${size:-0}" -gt "$bigsize" ]; then big=$name; bigsize=$size; fi ;;
+        esac
+    done < <(lsblk -lnpbo NAME,PARTTYPE,SIZE,PARTLABEL "$disk" 2>/dev/null)
+    if [ $recovery = 1 ] && [ -n "$esp" ] && [ -n "$big" ] && [ "$bigsize" -ge 4000000000 ]; then
+        echo "$esp $big"
+    fi
 }
 
 part() {    # part /dev/sda 1 → /dev/sda1 · part /dev/nvme0n1 1 → /dev/nvme0n1p1
@@ -87,16 +117,33 @@ install_to() {
 
     step 2 "Preparando el disco"
     for p in $(lsblk -lnpo NAME "$disk" | tail -n +2); do umount -lf "$p" 2>/dev/null; swapoff "$p" 2>/dev/null; done
-    run wipefs -a -f "$disk" || die "No se pudo borrar el disco"
-    run sgdisk --zap-all "$disk"
-    run sgdisk -n1:1M:+300M -t1:EF00 -c1:EFI -n2:0:0 -t2:8300 -c2:Vitrina "$disk" || die "No se pudo particionar"
-    run partprobe "$disk"
-    udevadm settle 2>/dev/null
-    sleep 1
-    local esp root
-    esp=$(part "$disk" 1)
-    root=$(part "$disk" 2)
-    run mkfs.vfat -F 32 -n EFI "$esp" || die "No se pudo formatear la partición de arranque"
+    local esp root plan
+    plan=$(keep_plan "$disk")
+    if [ -n "$plan" ]; then
+        # Se conserva la recuperación de macOS: solo se reemplaza la partición de macOS.
+        read -r esp root <<<"$plan"
+        say "MODO conservar"
+        local num
+        num=$(cat "/sys/class/block/$(basename "$root")/partition")
+        run wipefs -a -f "$root" || die "No se pudo borrar macOS"
+        run sgdisk -t "$num:8300" -c "$num:Vitrina" "$disk" || die "No se pudo cambiar la partición"
+        run partprobe "$disk"
+        udevadm settle 2>/dev/null
+        sleep 1
+        if [ "$(blkid -s TYPE -o value "$esp")" != vfat ]; then
+            run mkfs.vfat -F 32 -n EFI "$esp" || die "No se pudo formatear la partición de arranque"
+        fi
+    else
+        run wipefs -a -f "$disk" || die "No se pudo borrar el disco"
+        run sgdisk --zap-all "$disk"
+        run sgdisk -n1:1M:+300M -t1:EF00 -c1:EFI -n2:0:0 -t2:8300 -c2:Vitrina "$disk" || die "No se pudo particionar"
+        run partprobe "$disk"
+        udevadm settle 2>/dev/null
+        sleep 1
+        esp=$(part "$disk" 1)
+        root=$(part "$disk" 2)
+        run mkfs.vfat -F 32 -n EFI "$esp" || die "No se pudo formatear la partición de arranque"
+    fi
     # Sin las funciones nuevas de ext4 que el arranque (GRUB) todavía no sabe leer.
     run mkfs.ext4 -F -q -L vitrina -O ^orphan_file,^metadata_csum_seed "$root" || die "No se pudo formatear el disco"
     mkdir -p "$TARGET" "$SQ"
@@ -125,6 +172,11 @@ EOF
     # El kernel y la configuración del arranque van en la partición EFI (FAT):
     # así GRUB no necesita leer ext4.
     mkdir -p "$TARGET/boot/efi/EFI/BOOT" "$TARGET/boot/efi/EFI/vitrina"
+    rm -f "$TARGET/boot/efi/EFI/vitrina/"*        # una instalación anterior
+    local need free
+    need=$(( $(stat -c %s "$TARGET/boot/vmlinuz") + $(stat -c %s "$TARGET/boot/initrd.img") + 8000000 ))
+    free=$(( $(stat -f -c '%a * %S' "$TARGET/boot/efi") ))
+    [ "$free" -ge "$need" ] || die "La partición de arranque no tiene espacio ($((free / 1000000)) MB libres)"
     cp "$TARGET/boot/vmlinuz" "$TARGET/boot/initrd.img" "$TARGET/boot/efi/EFI/vitrina/" \
         || die "No se pudo copiar el kernel al arranque"
     cat >"$TARGET/boot/efi/EFI/vitrina/grub.cfg" <<EOF

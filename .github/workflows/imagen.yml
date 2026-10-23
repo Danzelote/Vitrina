@@ -60,7 +60,7 @@ jobs:
           tar --exclude='__pycache__' --exclude='app/tests' -czf "out/vitrina-app-$v.tar.gz" app requirements.txt os/rootfs
           (cd out && sha256sum "vitrina-app-$v.tar.gz" > "vitrina-app-$v.tar.gz.sha256")
       - name: Herramientas
-        run: sudo apt-get update -q && sudo apt-get install -y -q qemu-system-x86 qemu-utils ovmf socat
+        run: sudo apt-get update -q && sudo apt-get install -y -q qemu-system-x86 qemu-utils ovmf socat gdisk
       - name: Probar en una máquina virtual
         id: prueba
         continue-on-error: true

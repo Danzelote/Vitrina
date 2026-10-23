@@ -7,7 +7,7 @@
 set -uo pipefail
 ISO=$1
 DIR=$(cd "$(dirname "$ISO")" && pwd)
-DISK=$DIR/disco-prueba.qcow2
+DISK=$DIR/disco-prueba.raw
 LOG1=$DIR/instalar.log
 LOG2=$DIR/instalada.log
 MON=/tmp/vitrina-qemu-inst.sock
@@ -21,24 +21,37 @@ if [ -e /dev/kvm ]; then
     sudo chmod 666 /dev/kvm 2>/dev/null || true
     [ -w /dev/kvm ] && ACCEL="-enable-kvm -cpu host"
 fi
-qemu-img create -q -f qcow2 "$DISK" 8G
+# Un disco como el de una Mac con macOS: EFI, "Macintosh HD" y "Recovery HD".
+# El instalador debe reemplazar solo macOS y conservar la recuperación.
+truncate -s 8G "$DISK"
+sgdisk -n1:40:+200M -t1:EF00 -c1:EFI -n2:0:-650M -t2:AF00 -c2:"Macintosh HD" \
+    -n3:0:0 -t3:AB00 -c3:"Recovery HD" "$DISK" >/dev/null
+sgdisk -p "$DISK" | tail -n 4
 
 echo "== 1) Instalar en el disco virtual"
 timeout 1800 qemu-system-x86_64 $ACCEL -m 2048 -smp 2 -cdrom "$ISO" \
     -kernel "$DIR/vmlinuz" -initrd "$DIR/initrd.img" \
     -append "boot=live vitrina.autoinstall console=ttyS0,115200 systemd.journald.forward_to_console=1" \
-    -drive "file=$DISK,if=virtio,format=qcow2" -vga std -display none -serial "file:$LOG1" -nic none -no-reboot
+    -drive "file=$DISK,if=virtio,format=raw" -vga std -display none -serial "file:$LOG1" -nic none -no-reboot
 grep -aE "Instalando en|PASO|AVANCE|LISTO|ERROR|INSTALACION OK" "$LOG1" | awk '!/AVANCE/ || ++n % 10 == 1' | tail -n 40
 if ! grep -aq "INSTALACION OK" "$LOG1"; then
     echo "PRUEBA FALLÓ: no se instaló"
     exit 1
 fi
 
+echo "== Particiones después de instalar"
+sgdisk -p "$DISK" | tail -n 4
+if ! sgdisk -i 3 "$DISK" | grep -q "426F6F74-0000-11AA-AA11-00306543ECAC"; then
+    echo "PRUEBA FALLÓ: se borró la recuperación de macOS"
+    exit 1
+fi
+echo "La recuperación de macOS sigue ahí"
+
 echo "== 2) Arrancar el disco instalado con UEFI ($CODE)"
 cp "$VARS_SRC" "$VARS"
 qemu-system-x86_64 $ACCEL -m 2048 -smp 2 -machine q35 \
     -drive "if=pflash,format=raw,readonly=on,file=$CODE" -drive "if=pflash,format=raw,file=$VARS" \
-    -drive "file=$DISK,if=virtio,format=qcow2" -vga std -display none -serial "file:$LOG2" \
+    -drive "file=$DISK,if=virtio,format=raw" -vga std -display none -serial "file:$LOG2" \
     -monitor "unix:$MON,server,nowait" -nic user,model=e1000 &
 QEMU=$!
 ok=1

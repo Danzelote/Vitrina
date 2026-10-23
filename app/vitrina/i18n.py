@@ -181,6 +181,10 @@ EN = {
     "Se borrará TODO lo que tiene este disco: macOS, programas, documentos y fotos. No se puede deshacer.":
         "EVERYTHING on this disk will be erased: macOS, apps, documents and photos. This can't be undone.",
     "Continuar": "Continue",
+    "Se borrará macOS con todos sus programas, documentos y fotos. No se puede deshacer.":
+        "macOS will be erased with all its apps, documents and photos. This can't be undone.",
+    "Se conserva la recuperación de macOS (⌘R al prender) por si algún día quieres volver a instalarlo.":
+        "The macOS recovery partition (⌘R at startup) is kept, in case you ever want to reinstall it.",
     "¿Borrar el disco e instalar?": "Erase the disk and install?",
     "Último aviso: se borrará {m} ({s}) y no habrá forma de recuperar lo que tiene.":
         "Last warning: {m} ({s}) will be erased and its contents can't be recovered.",

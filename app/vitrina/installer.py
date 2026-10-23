@@ -51,9 +51,11 @@ class Installer:
         try:
             out = subprocess.run(_cmd(["detect"]), capture_output=True, text=True, timeout=20).stdout
             for line in out.splitlines():
-                parts = line.split(" ", 3)
-                if len(parts) >= 3 and parts[0] == "DISK":
-                    found.append((parts[1], int(parts[2]), parts[3] if len(parts) > 3 else ""))
+                # DISK <dispositivo> <bytes> <todo|conservar> <modelo>
+                parts = line.split(" ", 4)
+                if len(parts) >= 4 and parts[0] == "DISK":
+                    found.append((parts[1], int(parts[2]), parts[4] if len(parts) > 4 else "",
+                                  parts[3] == "conservar"))
         except Exception as exc:       # noqa: BLE001
             print("Instalar: no se pudo buscar el disco:", exc, flush=True)
         found.sort(key=lambda d: -d[1])
