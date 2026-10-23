@@ -220,8 +220,61 @@ EOF
     say "LISTO"
 }
 
+# -- Memorias USB con fotos (para importarlas; solo lectura) -------------------------
+USBDIR=/run/vitrina-usb
+
+usb_list() {    # "USB <partición> <sistema de archivos> <nombre>" de memorias conectadas
+    local skip line NAME TYPE FSTYPE LABEL PKNAME tran
+    skip=$(live_disk)
+    while IFS= read -r line; do
+        NAME="" TYPE="" FSTYPE="" LABEL="" PKNAME=""
+        eval "$line"
+        case "$TYPE" in part|disk) ;; *) continue ;; esac
+        case "$FSTYPE" in vfat|exfat|ntfs|hfsplus|ext4|ext3|ext2) ;; *) continue ;; esac
+        echo "$skip" | grep -qx "$NAME" && continue
+        [ -n "$PKNAME" ] && echo "$skip" | grep -qx "$PKNAME" && continue
+        tran=$(lsblk -dno TRAN "${PKNAME:-$NAME}" 2>/dev/null | tr -d ' ')
+        [ "$tran" = usb ] || continue
+        echo "USB $NAME $FSTYPE ${LABEL:-USB}"
+    done < <(lsblk -npP -o NAME,TYPE,FSTYPE,LABEL,PKNAME 2>/dev/null)
+}
+
+usb_mount() {
+    local dev=$1 fs dir opts
+    usb_list | awk '{print $2}' | grep -qx "$dev" || { echo "ERROR no es una memoria USB"; exit 1; }
+    fs=$(blkid -s TYPE -o value "$dev")
+    dir=$USBDIR/$(basename "$dev")
+    mkdir -p "$dir"
+    mountpoint -q "$dir" && { echo "MOUNT $dir"; return; }
+    opts=ro,nosuid,nodev,noexec
+    case "$fs" in
+        vfat) opts=$opts,uid=1000,gid=1000,utf8 ;;
+        exfat) opts=$opts,uid=1000,gid=1000 ;;
+        ntfs) fs=ntfs3; opts=$opts,uid=1000,gid=1000 ;;
+        hfsplus) opts=$opts,uid=1000,gid=1000 ;;
+    esac
+    if mount -t "$fs" -o "$opts" "$dev" "$dir" 2>/dev/null || mount -o ro "$dev" "$dir" 2>/dev/null; then
+        echo "MOUNT $dir"
+    else
+        rmdir "$dir" 2>/dev/null
+        echo "ERROR no se pudo abrir la memoria"
+        exit 1
+    fi
+}
+
+usb_umount() {
+    local dir=$USBDIR/$(basename "$1")
+    case "$1" in /dev/*) ;; *) exit 1 ;; esac
+    umount "$dir" 2>/dev/null || umount -l "$dir" 2>/dev/null
+    rmdir "$dir" 2>/dev/null
+    echo "OK"
+}
+
 case "${1:-}" in
     detect) detect ;;
+    usb-list) usb_list ;;
+    usb-mount) [ -n "${2:-}" ] && usb_mount "$2" ;;
+    usb-umount) [ -n "${2:-}" ] && usb_umount "$2" ;;
     run)
         [ -n "${2:-}" ] || { echo "uso: install.sh run <disco> [extra]"; exit 2; }
         # Que no se duerma ni se apague a medio camino (tapa, tecla de encendido).
@@ -231,5 +284,5 @@ case "${1:-}" in
         fi
         install_to "$2" "${3:-}"
         ;;
-    *) echo "uso: install.sh detect | run <disco> [extra]"; exit 2 ;;
+    *) echo "uso: install.sh detect | run <disco> [extra] | usb-list | usb-mount <dev> | usb-umount <dev>"; exit 2 ;;
 esac

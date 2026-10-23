@@ -218,6 +218,38 @@ EN = {
     "Buscando la versión nueva": "Looking for the new version",
     "Descargando la versión {v}": "Downloading version {v}",
     "Actualizando el logo de arranque": "Updating the boot logo",
+    # 0.11
+    "Conexión": "Connection",
+    "General": "General",
+    "Qué pasa sola en la presentación": "What plays in the slideshow",
+    "Fotos y videos": "Photos and videos",
+    "Solo fotos": "Photos only",
+    "Solo videos": "Videos only",
+    "Fotos, videos o ambos": "Photos, videos or both",
+    "Tecla H en cualquier momento": "Press H anytime",
+    "Ver": "Show",
+    "Bloquear teclado": "Lock keyboard",
+    "Para que nadie (ni el gato) cambie nada: mantén Control + L 3 s": "So nobody (not even the cat) changes anything: hold Control + L for 3 s",
+    "Bloquear": "Lock",
+    "Mantén… {n}": "Hold… {n}",
+    "Teclado bloqueado": "Keyboard locked",
+    "Teclado desbloqueado": "Keyboard unlocked",
+    "Teclado bloqueado · Mantén Control + L 3 s para desbloquear": "Keyboard locked · Hold Control + L for 3 s to unlock",
+    "Bloquear el teclado (mantener 3 s)": "Lock the keyboard (hold 3 s)",
+    "{n} en {c}": "{n} in {c}",
+    "Fotos en la memoria USB": "Photos on the USB drive",
+    "Se encontraron {n} en “{l}”.": "Found {n} on “{l}”.",
+    "Ahora no": "Not now",
+    "Importar": "Import",
+    "Importando…": "Importing…",
+    "{a} de {b}": "{a} of {b}",
+    "No quites la memoria.": "Don't remove the drive.",
+    "No se terminó de importar": "The import didn't finish",
+    "{a} nuevas · {d} ya estaban": "{a} new · {d} already here",
+    "Ya puedes quitar la memoria.": "You can remove the drive now.",
+    "Colección «{l}»": "Collection “{l}”",
+    "Sin colección": "No collection",
+    "La memoria se quitó antes de terminar": "The drive was removed before finishing",
     # Biblioteca vacía
     "No hay fotos todavía": "No photos yet",
     "Escanea el código con el celular para agregar fotos": "Scan the code with your phone to add photos",
@@ -273,3 +305,32 @@ def ampm(hour):
     if _lang[0] == "en":
         return "AM" if hour < 12 else "PM"
     return "a. m." if hour < 12 else "p. m."
+
+
+def media_count(photos, videos):
+    """'5 fotos · 5 videos', '48 fotos', '1 video'."""
+    en = _lang[0] == "en"
+    parts = []
+    if photos or not videos:
+        parts.append(f"{photos:,} " + (("photo" if photos == 1 else "photos") if en else ("foto" if photos == 1 else "fotos")))
+    if videos:
+        parts.append(f"{videos:,} video" + ("" if videos == 1 else "s"))
+    return " · ".join(parts)
+
+
+def new_media(photos, videos):
+    """Aviso de lo recién subido: '3 fotos y 1 video nuevos'."""
+    en = _lang[0] == "en"
+    if en:
+        bits = []
+        if photos:
+            bits.append(f"{photos} new photo" + ("" if photos == 1 else "s"))
+        if videos:
+            bits.append(f"{videos} new video" + ("" if videos == 1 else "s"))
+        return " and ".join(bits)
+    if photos and videos:
+        return (f"{photos} foto" if photos == 1 else f"{photos} fotos") + " y " + \
+            (f"{videos} video nuevos" if videos == 1 else f"{videos} videos nuevos")
+    if videos:
+        return "1 video nuevo" if videos == 1 else f"{videos} videos nuevos"
+    return "1 foto nueva" if photos == 1 else f"{photos} fotos nuevas"

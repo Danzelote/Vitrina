@@ -36,7 +36,10 @@ const EN = {
   "Horario": "Schedule", "De noche": "At night", "Apagada": "Off", "Reloj ventana": "Window", "Reloj clásico": "Classic",
   "Color del reloj": "Clock color", "Blanco": "White", "Azul": "Blue", "Rojo": "Red",
   "Esta Mac no tiene sensor de luz ni cámara.": "This Mac has no light sensor or camera.",
-  "Brillo automático": "Auto-brightness", "Noche": "Night",
+  "Brillo automático": "Auto-brightness", "Noche": "Night", "General": "General",
+  "Teclado bloqueado": "Keyboard locked", "Mostrar": "Show", "Fotos y videos": "Photos and videos",
+  "Solo fotos": "Photos only", "Solo videos": "Videos only",
+  "En la Vitrina: mantén Control + L 3 segundos para bloquear o desbloquear el teclado.": "On the Vitrina: hold Control + L for 3 seconds to lock or unlock the keyboard.",
   "Actualización": "Update", "Al día": "Up to date", "Actualizando… ({n} de {m})": "Updating… ({n} of {m})",
   "Listo, reiniciando…": "Done, restarting…", "Actualizar a {v}": "Update to {v}", "Buscar": "Check",
   "El brillo mínimo se calibra en la Vitrina: Ajustes → Pantalla.": "Minimum brightness is calibrated on the Vitrina: Settings → Display.",
@@ -114,6 +117,7 @@ function showWelcome(expired) {
 async function refresh() {
   const [info, photos] = await Promise.all([api("/api/info"), api("/api/photos")]);
   S.info = info; S.photos = photos;
+  updateBadge();
   if (info.settings.language !== LANG) { LANG = info.settings.language; document.documentElement.lang = LANG; }
   document.querySelectorAll("[data-t]").forEach((el) => (el.textContent = t(el.dataset.t)));
 }
@@ -320,10 +324,12 @@ function renderPhotos() {
   const list = S.photos.filter((p) => S.filter === null || p.c === S.filter);
   const nSel = S.selected.size;
   $view.innerHTML = `
-    <div class="head"><h1>${t("Fotos")}</h1>
-      <button class="link" id="sel">${S.selecting ? t("Cancelar") : t("Seleccionar")}</button></div>
-    <p class="sub">${S.selecting ? t("{n} seleccionadas", { n: nSel }) : summary(list)}</p>
-    ${chipsHTML(S.filter, true, false)}
+    <div class="sticky">
+      <div class="head"><h1>${t("Fotos")}</h1>
+        <button class="link" id="sel">${S.selecting ? t("Cancelar") : t("Seleccionar")}</button></div>
+      <p class="sub">${S.selecting ? t("{n} seleccionadas", { n: nSel }) : summary(list)}</p>
+      ${chipsHTML(S.filter, true, false)}
+    </div>
     ${list.length ? `<div class="grid">${list.map(cell).join("")}</div>` : `<div class="empty">${t("Todavía no hay fotos aquí.")}</div>`}`;
   $view.querySelector("#sel").onclick = () => { S.selecting = !S.selecting; S.selected.clear(); render(); };
   bindChips((c) => { S.filter = c; render(); }, false);
@@ -454,6 +460,7 @@ function renderCollections() {
 // ---------------------------------------------------------------- ajustes
 const OPTS = {
   kenburns: [["off", "Apagado"], ["zoom", "Solo zoom"], ["pan", "Zoom y paneo"]],
+  media: [["all", "Fotos y videos"], ["photos", "Solo fotos"], ["videos", "Solo videos"]],
   clock: [["off", "Oculto"], ["12", "12 h"], ["24", "24 h"]],
   idle_seconds: [[10, "10 s"], [15, "15 s"], [30, "30 s"], [60, "1 min"]],
   language: [["es", "Español"], ["en", "English"]],
@@ -481,6 +488,7 @@ const SET_PAGES = {
   show: { title: "Presentación", icon: "▶", color: "#ff9f0a" },
   screen: { title: "Pantalla", icon: "☀", color: "#0a84ff" },
   night: { title: "Noche", icon: "☾", color: "#5e5ce6" },
+  general: { title: "General", icon: "⚙", color: "#8e8e93" },
 };
 
 function settingsPageHTML(page) {
@@ -488,14 +496,29 @@ function settingsPageHTML(page) {
   const nightOn = s.night !== "never";
   if (page === "show") return `<div class="card">
       ${segRow("kenburns", "Ken Burns")}
+      ${segRow("media", "Mostrar")}
       ${switchRow("memories", "Un día como hoy")}
       ${switchRow("show_info", "Fecha y lugar")}
       ${segRow("clock", "Reloj")}
       ${switchRow("shuffle", "Orden aleatorio")}
       ${segRow("idle_seconds", "Volver a la presentación")}
     </div>`;
-  if (page === "screen") return `<div class="card">
+  if (page === "general") return `<div class="card">
       ${segRow("language", "Idioma")}
+      ${switchRow("locked", "Teclado bloqueado")}
+    </div>
+    <p class="foot">${t("En la Vitrina: mantén Control + L 3 segundos para bloquear o desbloquear el teclado.")}</p>
+    <div class="section">${t("Vitrina")}</div>
+    <div class="card">
+      ${i.update && i.update.available ? updateRow(i.update) : ""}
+      ${i.disk ? `<div class="row stack"><div style="display:flex;justify-content:space-between"><span class="title">${t("Espacio")}</span>
+        <span class="value">${t("{a} libres de {b}", { a: gb(i.disk.free), b: gb(i.disk.total) })}</span></div>
+        <div class="disk"><i style="width:${(100 * (1 - i.disk.free / i.disk.total)).toFixed(1)}%"></i></div></div>` : ""}
+      <div class="row"><span class="grow title">${t("Contenido")}</span><span class="value">${count(i.photos, "1 foto", "{n} fotos")} · ${count(i.videos, "1 video", "{n} videos")}</span></div>
+      <div class="row"><span class="grow title">${t("Versión")}</span><span class="value">${esc(i.version)}</span></div>
+      <a class="row nav" href="/api/diag" target="_blank"><span class="grow title">${t("Diagnóstico")}</span><span class="chevron">›</span></a>
+    </div>`;
+  if (page === "screen") return `<div class="card">
       ${segRow("theme", "Apariencia")}
       ${switchRow("auto_brightness", "Brillo automático")}
       ${s.auto_brightness && !i.light_sensor ? `<div class="row"><span class="note">${t("Esta Mac no tiene sensor de luz ni cámara.")}</span></div>` : ""}
@@ -524,8 +547,15 @@ async function updateAction(action) {
   for (let i = 0; i < 90 && ["checking", "applying"].includes(S.info.update.state); i++) {
     await new Promise((r) => setTimeout(r, 2000));
     try { await refresh(); } catch {}
-    if (S.tab === "settings" && !S.setPage) renderSettings();
+    if (S.tab === "settings" && S.setPage === "general") renderSettings();
   }
+}
+
+const newVersion = () => !!(S.info && S.info.update && S.info.update.available && S.info.update.state === "new");
+// Puntito naranja en Ajustes cuando hay una versión nueva.
+function updateBadge() {
+  const b = document.querySelector('#tabs button[data-tab="settings"]');
+  if (b) b.classList.toggle("badge", newVersion());
 }
 
 function renderSettings(dir) {
@@ -543,27 +573,17 @@ function renderSettings(dir) {
     <div class="card">
       ${Object.entries(SET_PAGES).map(([k, p]) => `<button class="row nav" data-page="${k}">
         <span class="ico" style="background:${p.color}">${p.icon}</span>
-        <span class="grow title">${t(p.title)}</span><span class="chevron">›</span></button>`).join("")}
-    </div>
-    <div class="section">${t("Vitrina")}</div>
-    <div class="card">
-      ${i.disk ? `<div class="row stack"><div style="display:flex;justify-content:space-between"><span class="title">${t("Espacio")}</span>
-        <span class="value">${t("{a} libres de {b}", { a: gb(i.disk.free), b: gb(i.disk.total) })}</span></div>
-        <div class="disk"><i style="width:${(100 * (1 - i.disk.free / i.disk.total)).toFixed(1)}%"></i></div></div>` : ""}
-      <div class="row"><span class="grow title">${t("Contenido")}</span><span class="value">${count(i.photos, "1 foto", "{n} fotos")} · ${count(i.videos, "1 video", "{n} videos")}</span></div>
-      <div class="row"><span class="grow title">${t("Versión")}</span><span class="value">${esc(i.version)}</span></div>
-      ${i.update && i.update.available ? updateRow(i.update) : ""}
-      <a class="row nav" href="/api/diag" target="_blank"><span class="grow title">${t("Diagnóstico")}</span><span class="chevron">›</span></a>
+        <span class="grow title">${t(p.title)}</span>${k === "general" && newVersion() ? `<span class="dot"></span>` : ""}<span class="chevron">›</span></button>`).join("")}
     </div>
     <div class="card" style="margin-top:24px"><button class="row danger" id="unpair">${t("Desconectar este celular")}</button></div>
     <p class="sub" style="text-align:center;margin-top:18px">github.com/Danzelote/Vitrina · ko-fi.com/danzelot</p></div>`;
-    const upd = $view.querySelector("#upd"), updc = $view.querySelector("#upd-check");
-    if (upd) upd.onclick = () => updateAction("apply");
-    if (updc) updc.onclick = () => updateAction("check");
     $view.querySelectorAll("[data-page]").forEach((b) => {
       b.onclick = () => { S.setPage = b.dataset.page; renderSettings("in"); window.scrollTo(0, 0); };
     });
   }
+  const upd = $view.querySelector("#upd"), updc = $view.querySelector("#upd-check");
+  if (upd) upd.onclick = () => updateAction("apply");
+  if (updc) updc.onclick = () => updateAction("check");
   document.querySelectorAll(".seg").forEach((seg) => placePill(seg, true));
   $view.querySelectorAll(".seg").forEach((seg) => seg.querySelectorAll("button").forEach((b) => {
     b.onclick = () => {

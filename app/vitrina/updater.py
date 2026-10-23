@@ -55,6 +55,8 @@ class Updater:
                 self.state = "error"
         except Exception as exc:       # noqa: BLE001
             self.error, self.state = str(exc), "error"
+        finally:
+            self.checked_at = time.monotonic()      # no reintentar enseguida (ni sin internet)
 
     def apply(self):
         if not available() or self.state in ("applying", "done"):

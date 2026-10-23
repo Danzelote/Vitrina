@@ -33,6 +33,7 @@ from . import installer as INST  # noqa: E402
 from . import ambient as AMB  # noqa: E402
 from . import watchdog as WATCH  # noqa: E402
 from . import updater as UPD  # noqa: E402
+from . import usbimport as USBI  # noqa: E402
 from . import config as C  # noqa: E402
 from . import levels as LV  # noqa: E402
 from . import video as VID  # noqa: E402
@@ -61,6 +62,10 @@ HUD_IN, HUD_HOLD, HUD_OUT = 0.15, 1.4, 0.35   # píldora de volumen y brillo
 # Teclas de volumen y brillo (códigos de SDL; pygame no les pone nombre).
 ENTER_EASE = cubic_bezier(0.7, 0.0, 0.3, 1.0)
 SHUT_SHRINK, SHUT_SPLIT = 1.0, 0.7    # apagar: la pantalla se cierra en la ventanita; luego se separa en 4    # la ventanita del logo crece hasta llenar la pantalla
+POWER_CHOICES = [("Reposo", "suspend"), ("Apagar", "poweroff"), ("Reiniciar", "reboot"), ("Cancelar", None)]
+LOCK_HOLD = 3.0                      # segundos con Control + L para bloquear o desbloquear el teclado
+ORANGE = (255, 159, 10)              # puntito de "hay una versión nueva"
+ROW = 64                             # alto de cada fila en Ajustes
 POWER_KEY = 0x40000066        # tecla de encendido (SDLK_POWER)
 MEDIA_KEYS = {0x40000080: "vol_up", 0x40000081: "vol_down", 0x4000007F: "mute", 0x40000106: "mute",
               0x40000114: "bright_up", 0x40000113: "bright_down"}
@@ -156,6 +161,7 @@ class App:
         self.ignore_swipe_until_gap = False
         self.swipe_acc = 0.0
         self.settings_tab = "show"
+        self.connect_tab = "wifi"
         self.slide_history = []     # fotos ya mostradas (flecha izquierda en la presentación)
         self.mouse_at = now         # último movimiento real del mouse
         self.keys_drove = False     # en el visor se avanzó con flechas o deslizando: sin puntero
@@ -166,6 +172,7 @@ class App:
         self.new_keys = []          # fotos recién llegadas: se muestran primero
         self.toast = None           # (texto, inicio) aviso discreto arriba
         self.toast_new = 0
+        self.toast_counts = [0, 0]   # fotos y videos del aviso de "nuevas"
         self.settings_tw = None     # animación al abrir y cerrar Ajustes
         self.settings_amt = 0.0
         self.offscreen_tex = {}     # texturas para el desenfoque del fondo y el panel
@@ -211,8 +218,12 @@ class App:
         # Logo de arranque: sigue la animación del que se vio mientras cargaba (mismo reloj).
         self.intro = {"start": splash.start if splash else now, "phase": "load"}
         self.shutting = None        # apagando o reiniciando: solo el logo
+        self.lock_hold, self.lock_fired = None, False
+        self.started_at = time.monotonic()
+        self.lock_hint_at = self.lock_changed_at = -1e9
         self.inst = None            # instalar en esta Mac: {"stage", "at", "ins", "disk"}
         self.updater = UPD.Updater()   # actualizar la Vitrina instalada desde GitHub
+        self.usb = USBI.UsbImport(self) if lib else None   # importar fotos de una memoria USB
         self.update_done_at = None
         self.help_open = False      # lista de atajos de teclado (tecla H)
         self.help_at = 0.0
@@ -764,8 +775,12 @@ class App:
     # ------------------------------------------------------------------ presentación
 
     def slide_pool(self):
-        pool = [i for i in range(len(self.items)) if self.matches(i)]
-        return pool or list(range(len(self.items)))
+        pool = [i for i in range(len(self.items)) if self.matches(i)] or list(range(len(self.items)))
+        media = self.settings.media            # fotos, videos o ambos
+        if media in ("photos", "videos"):
+            only = [i for i in pool if self.items[i].is_video == (media == "videos")]
+            pool = only or pool                # si no hay de ese tipo, no se queda en negro
+        return pool
 
     def next_index(self):
         pool = self.slide_pool()
@@ -777,7 +792,7 @@ class App:
                     self.new_keys.remove(k)
                 elif self.items[i].ready:
                     self.new_keys.remove(k)
-                    if i != self.hero:
+                    if i != self.hero and i in pool:
                         return i
         if self.settings.memories:
             self.slides_since_memory += 1
@@ -919,6 +934,11 @@ class App:
     def handle(self, e, now):
         if self.debug_input:
             self.debug_event(e)
+        if self.settings.locked and e.type != pygame.QUIT:
+            # Teclado bloqueado (para los gatos): nada cuenta; solo se avisa cómo desbloquear.
+            if e.type in (pygame.KEYDOWN, pygame.MOUSEBUTTONDOWN, pygame.MOUSEWHEEL, pygame.FINGERDOWN):
+                self.lock_hint_at = now
+            return
         if e.type == pygame.KEYDOWN and e.key == POWER_KEY:
             self.last_input = now
             if self.dark or self.night > 0.001:
@@ -930,6 +950,20 @@ class App:
                     self.open_power(now)
             return
         if self.shutting:
+            return
+        if self.usb_dialog():
+            if e.type == pygame.KEYDOWN and e.key == pygame.K_ESCAPE:
+                self.usb_action("close", now)
+            elif e.type == pygame.KEYDOWN and e.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+                self.usb_action("import" if self.usb.offer else "close", now)
+            elif e.type == pygame.MOUSEMOTION:
+                self.mx, self.my = e.pos
+                self.show_pointer(True)
+            elif e.type == pygame.MOUSEBUTTONUP and e.button == 1:
+                for rect, fn in reversed(self.hits):
+                    if inside(rect, self.mx, self.my):
+                        fn(now)
+                        break
             return
         if self.inst:
             if e.type == pygame.KEYDOWN and e.key == pygame.K_ESCAPE and self.inst["stage"] in ("info", "confirm", "error"):
@@ -961,13 +995,22 @@ class App:
                 self.finish_calib(now, True)
             return
         if self.power_dlg and e.type == pygame.KEYDOWN:
+            sel = self.power_dlg.setdefault("sel", 1)
             if e.key == pygame.K_ESCAPE:
                 self.close_power(now)
+            elif e.key in (pygame.K_UP, pygame.K_DOWN):
+                self.power_dlg["sel"] = (sel + (1 if e.key == pygame.K_DOWN else -1)) % len(POWER_CHOICES)
+            elif e.key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE):
+                action = POWER_CHOICES[sel][1]
+                if action is None:
+                    self.close_power(now)
+                else:
+                    self.power_action(action, now)
             return
         if e.type == pygame.KEYDOWN and e.key in MEDIA_KEYS:
             self.media_key(MEDIA_KEYS[e.key], now)
             return
-        if (self.pw is not None and self.settings_open and self.settings_tab == "wifi"
+        if (self.pw is not None and self.in_wifi_tab()
                 and e.type in (pygame.KEYDOWN, pygame.TEXTINPUT)):
             self.type_password(e)       # mientras se escribe la contraseña, las teclas son para eso
             return
@@ -1042,6 +1085,9 @@ class App:
             self.set_theme(value)
             st.save()
             self.say(f"{tr('Apariencia')}: {tr(label)}", now)
+        elif key == pygame.K_v:
+            self.queue = []
+            cycle("media", ["all", "photos", "videos"], ["Fotos y videos", "Solo fotos", "Solo videos"], "Mostrar")
         elif key == pygame.K_k:
             cycle("kenburns", [KB.OFF, KB.ZOOM, KB.PAN], ["Apagado", "Solo zoom", "Zoom y paneo"], "Ken Burns")
         elif key == pygame.K_r:
@@ -1066,8 +1112,7 @@ class App:
             else:
                 self.open_settings(now)
         elif key in (pygame.K_h, pygame.K_SLASH, pygame.K_QUESTION):
-            self.help_open = not self.help_open
-            self.help_at = now
+            self.toggle_help(now)
         elif key == pygame.K_p and self.items:
             if self.mode == FRAME:
                 self.enter_grid(now)
@@ -1089,6 +1134,51 @@ class App:
         else:
             return False
         return True
+
+    def set_locked(self, value, now):
+        self.settings.locked = value
+        self.settings.save()
+        self.lock_hint_at = now
+        self.lock_changed_at = now
+        if value:
+            self.show_pointer(False)
+
+    def update_lock(self, now):
+        """Mantener solo Control + L durante 3 s bloquea o desbloquea el teclado.
+        Si hay más teclas presionadas (un gato acostado), no cuenta."""
+        keys = pygame.key.get_pressed()
+        ctrl = keys[pygame.K_LCTRL] or keys[pygame.K_RCTRL]
+        holding = ctrl and keys[pygame.K_l] and sum(1 for k in range(len(keys)) if keys[k]) == 2
+        if not holding:
+            self.lock_hold = None
+            self.lock_fired = False
+            return
+        if self.lock_hold is None:
+            self.lock_hold = now
+        if not self.lock_fired and now - self.lock_hold >= LOCK_HOLD:
+            self.lock_fired = True
+            self.set_locked(not self.settings.locked, now)
+
+    def draw_lock(self, now):
+        g = self.gfx
+        holding = self.lock_hold is not None and not self.lock_fired
+        changed = now - self.lock_changed_at < 2.5
+        hint = self.settings.locked and now - self.lock_hint_at < 3.0
+        if not (holding or changed or hint):
+            return
+        if holding:
+            left = max(1, math.ceil(LOCK_HOLD - (now - self.lock_hold)))
+            text = tr("Mantén… {n}", n=left)
+        elif changed:
+            text = tr("Teclado bloqueado") if self.settings.locked else tr("Teclado desbloqueado")
+        else:
+            text = tr("Teclado bloqueado · Mantén Control + L 3 s para desbloquear")
+        with TH.using(TH.DARK):
+            g.pill(text, self.vw / 2, 24, 14, 1.0)
+
+    def toggle_help(self, now):
+        self.help_open = not self.help_open
+        self.help_at = now
 
     def on_key(self, e, now):
         if self.help_open:
@@ -1213,7 +1303,7 @@ class App:
         if self.power_dlg:
             self.close_power(now)
             return
-        if self.inst:
+        if self.inst or self.usb_dialog():
             return
         if self.settings_open:
             self.close_settings(now)
@@ -1295,9 +1385,12 @@ class App:
                 self.new_keys.extend(it.key for it in new)
                 # Varias subidas seguidas suman en el mismo aviso.
                 recent = self.toast and self.toast_new and now - self.toast[1] < 3.5
+                if not recent:
+                    self.toast_counts = [0, 0]
                 self.toast_new = (self.toast_new if recent else 0) + len(new)
-                n = self.toast_new
-                text = tr("1 foto nueva") if n == 1 else tr("{n} fotos nuevas", n=n)
+                for it in new:
+                    self.toast_counts[1 if it.is_video else 0] += 1
+                text = I18N.new_media(*self.toast_counts)
                 self.toast = (text, now - 0.4 if recent else now)   # si ya se veía, no vuelve a aparecer
         elif kind == "removed" and self.lib:
             self.lib.remove_paths(data)
@@ -1785,9 +1878,95 @@ class App:
         self.draw_power(now)
         if self.inst:
             self.draw_install(now)
+        elif self.usb_dialog():
+            self.draw_usb(now)
+        self.draw_lock(now)
         if self.intro:
             self.draw_intro(now)
         self.draw_dim()
+
+    # ------------------------------------------------------------------ memoria USB
+
+    def usb_dialog(self):
+        u = self.usb
+        return bool(u and (u.offer or u.job) and not self.intro and not self.inst and not self.shutting
+                    and not self.settings.locked)
+
+    def usb_action(self, action, now):
+        u = self.usb
+        if action == "import" and u.offer:
+            self.close_all_videos()
+            u.start()
+        elif action == "close":
+            if u.offer:
+                u.decline()
+            elif u.job and u.job["finished"]:
+                u.job = None
+        elif action in ("coll", "nocoll") and u.offer:
+            u.offer["into_collection"] = action == "coll"
+
+    def draw_usb(self, now):
+        """Memoria USB con fotos: ¿importarlas? · avance · listo."""
+        g, u = self.gfx, self.usb
+        self.hits, self.ui_rects = [], []
+        g.rect(0, 0, self.vw, self.vh, (0, 0, 0), 0.5)
+        w, cx = 520, self.vw / 2
+        lines, buttons, bar = [], [], None
+        if u.offer:
+            o = u.offer
+            title = tr("Fotos en la memoria USB")
+            lines.append((tr("Se encontraron {n} en “{l}”.", n=I18N.media_count(o["photos"], o["videos"]), l=o["label"]),
+                          14, T.text_secondary))
+            buttons = [(tr("Ahora no"), "close", "normal"), (tr("Importar"), "import", "active")]
+        else:
+            j = u.job
+            if not j["finished"]:
+                title = tr("Importando…")
+                lines.append((tr("{a} de {b}", a=j["done"], b=j["total"]), 14, T.text))
+                bar = j["done"] / max(1, j["total"])
+                lines.append((tr("No quites la memoria."), 13, T.text_secondary))
+            else:
+                title = tr("No se terminó de importar") if j["error"] else tr("Listo")
+                if j["error"]:
+                    lines.append((tr(j["error"]), 14, (255, 69, 58)))
+                lines.append((tr("{a} nuevas · {d} ya estaban", a=j["added"], d=j["dupes"]), 14, T.text))
+                lines.append((tr("Ya puedes quitar la memoria."), 13, T.text_secondary))
+                buttons = [(tr("Listo"), "close", "active")]
+        h = 30 + 46 + len(lines) * 28 + (34 if bar is not None else 0) + (72 if u.offer else 0) + (70 if buttons else 16)
+        x, y = cx - w / 2, (self.vh - h) / 2
+        g.round_rect(x, y, w, h, T.panel, 1.0, 22)
+        self.hits.append(((x, y, w, h), lambda now: None))
+        yy = y + 30
+        g.label_centered(title, cx, yy, 20, bold=True)
+        yy += 46
+        for text, size, color in lines[:1]:
+            g.label_centered(text, cx, yy, size, bold=color == T.text, color=color)
+            yy += 28
+        if bar is not None:
+            g.round_rect(x + 40, yy + 4, w - 80, 8, T.button, 1.0, 4)
+            if bar > 0.005:
+                g.round_rect(x + 40, yy + 4, max(8, (w - 80) * bar), 8, T.text, 1.0, 4)
+            yy += 34
+        for text, size, color in lines[1:]:
+            g.label_centered(text, cx, yy, size, bold=color == T.text, color=color)
+            yy += 28
+        if u.offer:                  # ¿a qué colección?
+            label = u.offer["label"]
+            opts = [("coll", tr("Colección «{l}»", l=label)), ("nocoll", tr("Sin colección"))]
+            seg_w = sum(g.tsize(g.text(t_, 13, T.text, True))[0] + 28 for _, t_ in opts) + 6
+            segs, _ = g.segmented(opts, "coll" if u.offer["into_collection"] else "nocoll", cx - seg_w / 2, yy, h=36)
+            for val, rect in segs:
+                self.hit(rect, lambda now, v=val: self.usb_action(v, now))
+            yy += 60
+        if buttons:
+            bw = (w - 64 - 12 * (len(buttons) - 1)) / len(buttons)
+            bx, by = x + 32, y + h - 32 - 44
+            for label, action, style in buttons:
+                active = style == "active"
+                g.round_rect(bx, by, bw, 44, T.active_bg if active else T.button, 1.0)
+                g.label_centered(label, bx + bw / 2, by + 13, 14, bold=True, color=T.active_fg if active else T.text)
+                self.hit((bx, by, bw, 44), lambda now, a=action: self.usb_action(a, now))
+                bx += bw + 12
 
     # ------------------------------------------------------------------ instalar
 
@@ -2103,10 +2282,11 @@ class App:
                           ("Espacio", "Pausar o seguir el video"), ("Esc", "Volver")]),
         ("Fotos", [("1 2 3 4", "Años, Meses, Fotos, Colecciones"), ("+ −", "Acercar o alejar")]),
         ("Ajustes rápidos", [("B · W · A", "Apariencia: oscuro, claro o automático"),
-                             ("K", "Ken Burns"), ("R", "Reloj"), ("I", "Fecha y lugar"),
+                             ("V", "Fotos, videos o ambos"), ("K", "Ken Burns"), ("R", "Reloj"), ("I", "Fecha y lugar"),
                              ("M", "Un día como hoy"), ("S", "Orden aleatorio"),
                              ("L", "Brillo automático"), ("N", "Modo noche ahora"),
-                             ("E", "Español o inglés"), (",", "Ajustes"), ("H", "Esta lista")]),
+                             ("E", "Español o inglés"), (",", "Ajustes"), ("H", "Esta lista"),
+                             ("Ctrl + L", "Bloquear el teclado (mantener 3 s)")]),
     ]
 
     def draw_help(self, now):
@@ -2217,8 +2397,9 @@ class App:
             g.label_centered(ln, cx, yy, 13, ta, color=T.text_secondary)
             yy += 18
         yy += 22
-        for label, action, active in ((tr("Reposo"), "suspend", False), (tr("Apagar"), "poweroff", True),
-                                      (tr("Reiniciar"), "reboot", False), (tr("Cancelar"), None, False)):
+        sel = self.power_dlg.get("sel", 1)
+        for k, (label, action) in enumerate(POWER_CHOICES):
+            label, active = tr(label), k == sel          # la marcada se mueve con ↑ ↓ y se acepta con Enter
             bx = x + 28
             g.round_rect(bx, yy, w - 56, bh, T.active_bg if active else T.button, ta)
             g.label_centered(label, cx, yy + (bh - 18) / 2, 14, ta, bold=True,
@@ -2711,6 +2892,8 @@ class App:
         # Derecha: presentación y ajustes, solo con íconos.
         sr = g.icon_button("gear", self.vw - 24 - 44, y, alpha=a, icon_size=24)
         self.hit(sr, self.open_settings)
+        if self.updater.state == "new":         # hay una versión nueva: puntito naranja
+            g.round_rect(sr[0] + sr[2] - 12, sr[1] + 1, 11, 11, ORANGE, a, 5.5)
         r = g.icon_button("play", sr[0] - 10 - 44, y, alpha=a, icon_size=22)
         self.hit(r, self.start_presentation)
         # Izquierda: el nivel (años, meses, fotos, colecciones).
@@ -2728,8 +2911,10 @@ class App:
             self.hit(fr, lambda now: self.set_filter(None))
         # Abajo: contador y zoom
         if self.lvl == PHOTOS:
-            n = sum(1 for i in range(len(self.items)) if self.matches(i))
-            main = tr("{n} fotos en {c}", n=n, c=self.coll_filter) if self.coll_filter else tr("{n} fotos", n=n)
+            shown = [self.items[i] for i in range(len(self.items)) if self.matches(i)]
+            nv = sum(1 for it in shown if it.is_video)
+            counts = I18N.media_count(len(shown) - nv, nv)
+            main = tr("{n} en {c}", n=counts, c=self.coll_filter) if self.coll_filter else counts
             sub = None
         elif self.lvl == MONTHS:
             main, sub = tr("Meses"), tr("· {n} con fotos", n=len(self.groups.months))
@@ -2830,13 +3015,13 @@ class App:
         done = g.button(tr("Listo"), x + w - 28 - 76, y + 20, h=36, active=True, size=14, pad=18)
         self.hit(done, lambda now: self.close_settings(now))
         tabs = [("show", tr("Presentación")), ("screen", tr("Pantalla")), ("night", tr("Noche")),
-                ("phone", tr("Celular"))]
-        if self.wifi.available:
-            tabs.append(("wifi", "WiFi"))
+                ("connect", tr("Conexión")), ("general", tr("General"))]
         tw_ = sum(g.tsize(g.text(lbl, 13, T.text, True))[0] + 28 for _, lbl in tabs) + 6
         tsegs, _ = g.segmented(tabs, self.settings_tab, x + (w - tw_) / 2, y + 74, h=36)
         for val, rect in tsegs:
             self.hit(rect, lambda now, v=val: self.pick_tab(v))
+            if val == "general" and self.updater.state == "new":       # hay versión nueva
+                g.round_rect(rect[0] + rect[2] - 9, rect[1] + 3, 8, 8, ORANGE, 1.0, 4)
         st = self.settings
         ry = [y + 146]
         right = x + w - 28
@@ -2859,7 +3044,7 @@ class App:
                         if on_change:
                             on_change()
                     self.hit(rect, pick)
-            ry[0] += 70
+            ry[0] += ROW
 
         def switch(title, sub, attr, on_change=None):
             row(title, sub)
@@ -2870,22 +3055,31 @@ class App:
                 if on_change:
                     on_change()
             self.hit(tr, flip)
-            ry[0] += 70
+            ry[0] += ROW
+
+        def action(title, sub, label, fn, active=False):
+            row(title, sub)
+            r = g.button(tr(label), 0, -1000, h=36, size=13, pad=16)     # se mide primero
+            r = g.button(tr(label), right - r[2], ry[0] + 2, h=36, size=13, pad=16, active=active)
+            self.hit(r, fn)
+            ry[0] += ROW
 
         if self.settings_tab == "show":
             choice("Ken Burns", "Movimiento lento de las fotos", "kenburns",
                    [(KB.OFF, "Apagado"), (KB.ZOOM, "Solo zoom"), (KB.PAN, "Zoom y paneo")])
-            switch("Un día como hoy", "Fotos de estas fechas de otros años", "memories")
-            switch("Fecha y lugar", "Abajo a la izquierda", "show_info")
-            choice("Reloj", "Abajo a la derecha", "clock", [("off", "Oculto"), ("12", "12 h"), ("24", "24 h")])
 
             def reset_queue():
                 self.queue = []
+            choice("Mostrar", "Qué pasa sola en la presentación", "media",
+                   [("all", "Fotos y videos"), ("photos", "Solo fotos"), ("videos", "Solo videos")],
+                   on_change=reset_queue)
+            switch("Un día como hoy", "Fotos de estas fechas de otros años", "memories")
+            switch("Fecha y lugar", "Abajo a la izquierda", "show_info")
+            choice("Reloj", "Abajo a la derecha", "clock", [("off", "Oculto"), ("12", "12 h"), ("24", "24 h")])
             switch("Orden aleatorio", "Mezcla las fotos", "shuffle", reset_queue)
             choice("Volver a la presentación", "Sin mover el mouse", "idle_seconds",
                    [(10, "10 s"), (15, "15 s"), (30, "30 s"), (60, "1 min")])
         elif self.settings_tab == "screen":
-            choice("Idioma", "Español o inglés", "language", I18N.LANGS, on_change=self.apply_language)
             choice("Apariencia", "Automático: claro de día", "theme",
                    [("light", "Claro"), ("dark", "Oscuro"), ("auto", "Automático")], on_change=self.apply_theme)
             kind = getattr(self.sensor, "kind", "") if self.sensor.available else ""
@@ -2898,36 +3092,9 @@ class App:
             else:
                 auto_sub = "Esta computadora no tiene sensor ni cámara"
             switch("Brillo automático", auto_sub, "auto_brightness")
-            if UPD.available():
-                up = self.updater
-                if up.checked_at is None or (time.monotonic() - up.checked_at > 600 and up.state in ("current", "error")):
-                    if up.state not in ("checking", "applying", "done"):
-                        up.check()
-                subs = {"idle": tr("Versión {v}", v=__version__), "checking": tr("Buscando…"),
-                        "current": tr("Versión {v} · al día", v=__version__),
-                        "new": tr("Hay una versión nueva: {v}", v=up.latest),
-                        "applying": tr("Paso {n} de {t} · {s}", n=max(1, up.step), t=up.total, s=tr(up.step_text or "Empezando")),
-                        "done": tr("Listo: versión {v}. Reiniciando…", v=up.latest),
-                        "error": up.error or ""}
-                row("Actualizaciones", subs.get(up.state, ""))
-                label = tr("Actualizar") if up.state == "new" else tr("Buscar")
-                if up.state not in ("applying", "done", "checking"):
-                    r = g.button(label, 0, -1000, h=36, size=13, pad=16)
-                    r = g.button(label, right - r[2], ry[0] + 2, h=36, size=13, pad=16, active=up.state == "new")
-                    self.hit(r, lambda now: up.apply() if up.state == "new" else up.check())
-                ry[0] += 70
             if self.backlight.available:
-                row("Brillo mínimo", "Calibrado" if st.min_brightness > 0 else "Para que nunca se vaya a negro")
-                r = g.button(tr("Calibrar"), 0, -1000, h=36, size=13, pad=16)     # se mide primero
-                r = g.button(tr("Calibrar"), right - r[2], ry[0] + 2, h=36, size=13, pad=16)
-                self.hit(r, lambda now: self.start_calib(now))
-                ry[0] += 70
-            if WIFI.SYSTEM:
-                r = g.button(tr("Apagar…"), x + 28, ry[0] - 10, h=36, size=13, pad=16)
-                self.hit(r, lambda now: self.open_power(now))
-                if INST.running_live():
-                    r2 = g.button(tr("Instalar en esta Mac…"), r[0] + r[2] + 10, ry[0] - 10, h=36, size=13, pad=16)
-                    self.hit(r2, lambda now: self.open_install(now))
+                action("Brillo mínimo", "Calibrado" if st.min_brightness > 0 else "Para que nunca se vaya a negro",
+                       "Calibrar", lambda now: self.start_calib(now))
         elif self.settings_tab == "night":
             choice("Modo noche", "Reloj o pantalla apagada a cierta hora", "night",
                    [(NIGHT.NEVER, "Nunca"), (NIGHT.SCHEDULE, "Por horario")])
@@ -2941,10 +3108,46 @@ class App:
                    [("white", "Blanco"), ("blue", "Azul"), ("red", "Rojo")],
                    enabled=st.night != NIGHT.NEVER and st.night_style == "classic")
             g.label(tr("Tecla N: la noche ahora · H: todos los atajos"), x + 28, ry[0] - 4, 12, color=T.text_secondary)
-        elif self.settings_tab == "wifi":
-            self.draw_wifi_tab(x, y + 130, w, now)
-        else:
-            self.draw_phone_tab(x, y + 130, w)
+        elif self.settings_tab == "connect":
+            subs = ([("wifi", "WiFi")] if self.wifi.available else []) + [("phone", tr("Celular"))]
+            if self.connect_tab not in dict(subs):
+                self.connect_tab = subs[0][0]
+            csegs, _ = g.segmented(subs, self.connect_tab, x + 28, y + 128, h=34)
+            for val, rect in csegs:
+                self.hit(rect, lambda now, v=val: self.pick_connect(v))
+            if self.connect_tab == "wifi":
+                self.draw_wifi_tab(x, y + 186, w, now)
+            else:
+                self.draw_phone_tab(x, y + 186, w)
+        else:       # General
+            choice("Idioma", "Español o inglés", "language", I18N.LANGS, on_change=self.apply_language)
+            if UPD.available():
+                up = self.updater
+                if up.checked_at is None or (time.monotonic() - up.checked_at > 600 and up.state in ("current", "error")):
+                    if up.state not in ("checking", "applying", "done"):
+                        up.check()
+                subs = {"idle": tr("Versión {v}", v=__version__), "checking": tr("Buscando…"),
+                        "current": tr("Versión {v} · al día", v=__version__),
+                        "new": tr("Hay una versión nueva: {v}", v=up.latest),
+                        "applying": tr("Paso {n} de {t} · {s}", n=max(1, up.step), t=up.total, s=tr(up.step_text or "Empezando")),
+                        "done": tr("Listo: versión {v}. Reiniciando…", v=up.latest),
+                        "error": up.error or ""}
+                if up.state in ("applying", "done", "checking"):
+                    row("Actualizaciones", subs.get(up.state, ""))
+                    ry[0] += ROW
+                else:
+                    action("Actualizaciones", subs.get(up.state, ""), "Actualizar" if up.state == "new" else "Buscar",
+                           lambda now: up.apply() if up.state == "new" else up.check(), active=up.state == "new")
+            action("Atajos de teclado", "Tecla H en cualquier momento", "Ver",
+                   lambda now: (self.close_settings(now), self.toggle_help(now)))
+            action("Bloquear teclado", "Para que nadie (ni el gato) cambie nada: mantén Control + L 3 s",
+                   "Bloquear", lambda now: (self.close_settings(now), self.set_locked(True, now)))
+            if WIFI.SYSTEM:
+                r = g.button(tr("Apagar…"), x + 28, ry[0] - 6, h=36, size=13, pad=16)
+                self.hit(r, lambda now: self.open_power(now))
+                if INST.running_live():
+                    r2 = g.button(tr("Instalar en esta Mac…"), r[0] + r[2] + 10, ry[0] - 6, h=36, size=13, pad=16)
+                    self.hit(r2, lambda now: self.open_install(now))
 
         g.rect(x + 28, y + h - 64, w - 56, 1, T.hairline, T.hairline_alpha)
         g.label(f"Vitrina {__version__}  ·  github.com/Danzelote/Vitrina", x + 28, y + h - 48, 12, color=T.text_secondary)
@@ -2953,15 +3156,26 @@ class App:
     # ------------------------------------------------------------------ WiFi
 
     def pick_tab(self, tab):
-        if tab != "wifi" and self.pw is not None:
+        if tab != "connect" and self.pw is not None:
             self.close_password()
         self.settings_tab = tab
-        if tab == "wifi" and not self.wifi.scanning:
+        if tab == "connect" and self.connect_tab == "wifi" and not self.wifi.scanning:
             self.wifi.scan()
+
+    def pick_connect(self, sub):
+        if sub != "wifi" and self.pw is not None:
+            self.close_password()
+        self.connect_tab = sub
+        if sub == "wifi" and not self.wifi.scanning:
+            self.wifi.scan()
+
+    def in_wifi_tab(self):
+        return self.settings_open and self.settings_tab == "connect" and self.connect_tab == "wifi"
 
     def open_wifi(self, now):
         self.open_settings(now)
-        self.pick_tab("wifi")
+        self.connect_tab = "wifi"
+        self.pick_tab("connect")
 
     def type_password(self, e):
         pw = self.pw
@@ -3068,7 +3282,7 @@ class App:
             if not wf.scanning:
                 g.label(tr("No se encontraron redes"), left, top, 14, color=T.text_secondary)
             return
-        for k, net in enumerate(wf.networks[:7]):
+        for k, net in enumerate(wf.networks[:6]):
             ssid, signal, secure, in_use = net
             ry = top + k * 52
             g.rect(left, ry - 8, right - left, 1, T.hairline, T.hairline_alpha)
@@ -3261,7 +3475,7 @@ class App:
         ly += 34
         if not devices:
             g.label(tr("Ninguno todavía"), x + 28, ly, 13, color=T.text_secondary)
-        for h, name, added in devices[:4]:
+        for h, name, added in devices[:3]:
             g.rect(x + 28, ly - 10, w - 56, 1, T.hairline, T.hairline_alpha)
             g.label(name, x + 28, ly + 2, 14, bold=True)
             g.label(I18N.long_date(datetime.fromtimestamp(added)), x + 28 + 110, ly + 4, 13, color=T.text_secondary)
@@ -3284,7 +3498,13 @@ class App:
             self.update(now)
         else:
             self.update_idle(now)
+        self.update_lock(now)
         self.check_wifi_joined(now)
+        # Busca versión nueva sola: al minuto de arrancar y luego cada 6 horas.
+        up = self.updater
+        if UPD.available() and up.state in ("idle", "current", "error") and now - self.started_at > 60 and (
+                up.checked_at is None or now - up.checked_at > 6 * 3600):
+            up.check()
         if self.updater.state == "done":     # actualizada: la app se cierra y run.sh la abre ya nueva
             if self.update_done_at is None:
                 self.update_done_at = now

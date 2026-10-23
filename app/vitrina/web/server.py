@@ -44,6 +44,8 @@ TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=u
 # Ajustes que se pueden cambiar desde el celular y sus valores válidos.
 SETTINGS = {
     "kenburns": ("off", "zoom", "pan"),
+    "media": ("all", "photos", "videos"),
+    "locked": (True, False),
     "memories": (True, False),
     "show_info": (True, False),
     "clock": ("off", "12", "24"),

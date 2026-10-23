@@ -27,6 +27,8 @@ class Settings:
     language: str = "es"         # "es" | "en"
     kenburns: str = "pan"        # "off" | "zoom" | "pan" (zoom y paneo)
     memories: bool = True        # "Un día como hoy"
+    locked: bool = False         # teclado bloqueado (Control + L 3 s); se queda así al reiniciar
+    media: str = "all"           # en la presentación: "all" | "photos" | "videos"
     clock: str = "off"           # "off" | "12" | "24"
     night: str = "never"         # "never" | "schedule"
     night_hours: str = "23-7"    # ver night.SCHEDULES
