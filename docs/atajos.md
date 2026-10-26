@@ -18,10 +18,11 @@ En la Vitrina, la tecla **H** muestra esta lista en pantalla.
 | **M** | Un día como hoy (*memories*) sí/no |
 | **S** | Orden aleatorio (*shuffle*) sí/no |
 | **L** | Brillo automático (*light*) sí/no |
-| **N** | Modo noche ahora (otra vez N para salir) |
+| **N** | Vista previa del modo noche (cualquier tecla o toque para salir) |
 | **E** | Español o inglés |
+| **/** · **Control + F** | Buscar: *videos*, *fotos*, un año (*2019*), un mes (*diciembre*), un lugar o una colección. Esc borra la búsqueda |
 | **,** | Abre o cierra Ajustes (como ⌘, en la Mac) |
-| **H** | Esta lista |
+| **H** · **?** | Esta lista |
 | **Control + L** (mantener 3 s) | Bloquea o desbloquea el teclado y el trackpad (por si pasa un gato). También se desbloquea desde el celular: Ajustes → General |
 
 Las teclas de volumen y brillo de la Mac también funcionan. La tecla de encendido pregunta si quieres reposo, apagar o reiniciar: elige con ↑ ↓ y acepta con Enter.

@@ -161,6 +161,8 @@ class UsbImport:
                     else:
                         dest = livelib.unique_path(os.path.join(target, name))
                         os.replace(tmp, dest)
+                        if v is not None:
+                            v.dupes.note(dest)
                         batch.append(dest)
                         job["added"] += 1
                 job["done"] += 1

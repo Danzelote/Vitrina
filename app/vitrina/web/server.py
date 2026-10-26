@@ -434,6 +434,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(200, {"status": "duplicate"})
             dest = livelib.unique_path(os.path.join(target, name))
             os.replace(tmp, dest)
+            self.v.dupes.note(dest)
             tell_app(self.v.app, "added", [dest])
         self.send(200, {"status": "added"})
 

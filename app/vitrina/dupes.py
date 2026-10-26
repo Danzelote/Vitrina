@@ -61,6 +61,9 @@ class Dupes:
                 self.cache = json.load(f)
         except Exception:
             self.cache = {}
+        # Lo recién agregado que la biblioteca todavía no termina de registrar
+        # (si llega la misma foto justo en ese momento, también se reconoce).
+        self.recent = []        # [(ruta, item, huella)]
 
     def _record(self, path, is_video, duration):
         rec = {"sha1": sha1_of(path), "v": is_video, "dur": round(duration, 1)}
@@ -120,4 +123,22 @@ class Dupes:
                 rec = self._record(path, new.is_video, new.duration)
             if self.same(rec, old, date_equal):
                 return it
+        known = {it.path for it in self.lib.snapshot}
+        self.recent = [r for r in self.recent if r[0] not in known and os.path.exists(r[0])]
+        for _p, it, old in self.recent:
+            date_equal = it.date == new.date
+            if rec is None:
+                rec = self._record(path, new.is_video, new.duration)
+            if self.same(rec, old, date_equal):
+                return it
         return None
+
+    def note(self, path):
+        """Acaba de agregarse `path` (ya en su lugar): se recuerda hasta que la biblioteca lo tenga."""
+        try:
+            it = library.scan_file(self.lib.folder, path)
+            if it is not None:
+                self.recent.append((path, it, self._record(path, it.is_video, it.duration)))
+                del self.recent[:-200]
+        except Exception:      # noqa: BLE001
+            pass

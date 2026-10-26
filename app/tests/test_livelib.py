@@ -88,3 +88,19 @@ def test_duplicates(tmp_path):
     other = str(tmp_path / "otra.jpg")
     make(other, "2024:05:01 10:00:01")
     assert d.find(other) is None
+
+
+def test_duplicate_just_added(tmp_path):
+    """La misma foto que llega justo cuando la primera aún no entra a la biblioteca."""
+    from vitrina import dupes
+    folder = str(tmp_path / "biblio")
+    os.makedirs(folder)
+    lib = livelib.LiveLibrary(folder, library.scan(folder), None)
+    d = dupes.Dupes(lib)
+    first = os.path.join(folder, "IMG_9.jpg")
+    make(first, "2024:06:01 12:00:00")
+    d.note(first)                       # ya se movió a la biblioteca, pero la app no la ha registrado
+    twin = str(tmp_path / "IMG_9 copia.jpg")
+    with open(first, "rb") as f, open(twin, "wb") as g:
+        g.write(f.read())
+    assert d.find(twin) is not None

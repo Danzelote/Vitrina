@@ -194,3 +194,36 @@ def zoom_at(cx, cy, s0, s1, fx, fy, vw, vh):
     px = cx + (fx - vw / 2) / s0
     py = cy + (fy - vh / 2) / s0
     return px - (fx - vw / 2) / s1, py - (fy - vh / 2) / s1
+
+
+class Grid:
+    """Las fotos que se ven en la cuadrícula (todas, o las de una colección o
+    búsqueda), acomodadas en su propia cuadrícula desde el centro. Se usa como
+    un Plane, pero con índices de foto (no de casilla)."""
+
+    def __init__(self, members):
+        self.members = list(members)
+        self.slot = {i: k for k, i in enumerate(self.members)}
+        self.plane = Plane(*grid_shape(max(1, len(self.members))), len(self.members))
+
+    cols = property(lambda self: self.plane.cols)
+    rows = property(lambda self: self.plane.rows)
+    count = property(lambda self: len(self.members))
+    width = property(lambda self: self.plane.width)
+    height = property(lambda self: self.plane.height)
+
+    def __contains__(self, i):
+        return i in self.slot
+
+    def cell_center(self, i):
+        k = self.slot.get(i)
+        if k is None:                        # no está en esta cuadrícula: el centro
+            return self.plane.width / 2, self.plane.height / 2
+        return self.plane.cell_center(k)
+
+    def index_at(self, px, py, count=None):
+        k = self.plane.index_at(px, py, len(self.members))
+        return None if k is None else self.members[k]
+
+    def item_at_slot(self, k):
+        return self.members[k] if 0 <= k < len(self.members) else None

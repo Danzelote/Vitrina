@@ -106,7 +106,9 @@ EN = {
     "Azul": "Blue",
     "Rojo": "Red",
     "Tecla N: simula la noche para probarlo": "N key: simulate night to try it",
-    "Tecla N: la noche ahora · H: todos los atajos": "N key: night now · H: all shortcuts",
+    "Tecla N: vista previa de la noche · H: todos los atajos": "N key: night preview · H: all shortcuts",
+    "Vista previa del modo noche": "Night mode preview",
+    "Vista previa del modo noche · toca cualquier tecla para salir": "Night mode preview · press any key to exit",
     "Apoya el proyecto en ko-fi.com/danzelot": "Support the project at ko-fi.com/danzelot",
     # Atajos de teclado
     "Sí": "On",
@@ -250,6 +252,9 @@ EN = {
     "Colección «{l}»": "Collection “{l}”",
     "Sin colección": "No collection",
     "La memoria se quitó antes de terminar": "The drive was removed before finishing",
+    "videos, 2019, diciembre, Cancún…": "videos, 2019, december, Paris…",
+    "Nada coincide con “{q}”": "Nothing matches “{q}”",
+    "Buscar (videos, 2019, diciembre, un lugar…)": "Search (videos, 2019, december, a place…)",
     # Biblioteca vacía
     "No hay fotos todavía": "No photos yet",
     "Escanea el código con el celular para agregar fotos": "Scan the code with your phone to add photos",

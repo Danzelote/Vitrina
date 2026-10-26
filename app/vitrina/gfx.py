@@ -398,6 +398,11 @@ class Gfx:
                 w = int(0.065 * S)
                 pygame.draw.line(surf, W, pt(0.60, 0.36), pt(0.86, 0.64), w)
                 pygame.draw.line(surf, W, pt(0.86, 0.36), pt(0.60, 0.64), w)
+        elif name == "search":                # lupa
+            r = 0.27 * S
+            pygame.draw.circle(surf, W, pt(0.42, 0.42), r)
+            pygame.draw.circle(surf, clear, pt(0.42, 0.42), r - 0.08 * S)
+            pygame.draw.line(surf, W, pt(0.60, 0.60), pt(0.84, 0.84), int(0.10 * S))
         elif name == "sun":
             pygame.draw.circle(surf, W, (c, c), 0.18 * S)
             for i in range(8):

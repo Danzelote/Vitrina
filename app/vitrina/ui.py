@@ -36,6 +36,7 @@ from . import ambient as AMB  # noqa: E402
 from . import watchdog as WATCH  # noqa: E402
 from . import updater as UPD  # noqa: E402
 from . import usbimport as USBI  # noqa: E402
+from . import search as SEARCH  # noqa: E402
 from . import config as C  # noqa: E402
 from . import levels as LV  # noqa: E402
 from . import video as VID  # noqa: E402
@@ -67,6 +68,7 @@ SHUT_SHRINK, SHUT_SPLIT = 1.0, 0.7    # apagar: la pantalla se cierra en la vent
 POWER_CHOICES = [("Reposo", "suspend"), ("Apagar", "poweroff"), ("Reiniciar", "reboot"), ("Cancelar", None)]
 LOCK_HOLD = 3.0                      # segundos con Control + L para bloquear o desbloquear el teclado
 ORANGE = (255, 159, 10)              # puntito de "hay una versión nueva"
+REGRID_TIME = 0.75                   # al entrar o salir de una colección o búsqueda
 ROW = 64                             # alto de cada fila en Ajustes
 POWER_KEY = 0x40000066        # tecla de encendido (SDLK_POWER)
 MEDIA_KEYS = {0x40000080: "vol_up", 0x40000081: "vol_down", 0x4000007F: "mute", 0x40000106: "mute",
@@ -101,7 +103,11 @@ class App:
         T.set(TH.resolve(self.settings.theme))
         I18N.set_lang(self.settings.language)
         self.zoom_sign = -1 if invert_zoom else 1
-        self.plane = cam.Plane(*cam.grid_shape(max(1, len(items))), len(items))
+        self.coll_filter = None
+        self.query, self.query_ok = "", None     # búsqueda (ver search.py)
+        self.search_open, self.search_text, self.search_due = False, "", None
+        self.plane = cam.Grid(range(len(items)))
+        self.regrid = None          # animación al cambiar de colección o búsqueda
         self.groups = LV.Groups(items)
 
         now = time.monotonic()
@@ -193,7 +199,8 @@ class App:
         self.drift_at = now + 180
         # Modo noche
         self.night = 0.0            # 0 = normal, 1 = apagada (o solo el reloj tenue)
-        self.night_force = False    # tecla n: simula la noche para probar
+        self.night_force = False    # tecla N: vista previa de la noche (hasta tocar algo)
+        self.night_preview_at = -1e9
         self.forced_recent = False
         self.dark = False
         self.woke = False
@@ -307,11 +314,108 @@ class App:
     # ------------------------------------------------------------------ filtro
 
     def matches(self, i):
-        return self.coll_filter is None or self.items[i].collection == self.coll_filter
+        it = self.items[i]
+        if self.coll_filter is not None and it.collection != self.coll_filter:
+            return False
+        return self.query_ok is None or self.query_ok(it)
 
-    def set_filter(self, name):
+    def grid_members(self):
+        members = [i for i in range(len(self.items)) if self.matches(i)]
+        return members or list(range(len(self.items)))
+
+    def set_filter(self, name, now=None, animate=True):
+        """Colección elegida (None = todas): la cuadrícula se rehace solo con esas fotos."""
         self.coll_filter = name
+        self.refilter(now, animate)
+
+    def open_search(self, now):
+        if self.mode != GRID:
+            self.enter_grid(now)
+        if self.lvl != PHOTOS:
+            self.to_photos(self.hero, now, zi=self.zi)
+        self.search_open = True
+        self.search_text = self.query
+        self.search_eat = now + 0.2          # el "/" que abrió el campo no se escribe en él
+        pygame.key.start_text_input()
+
+    def close_search(self):
+        self.search_open = False
+        pygame.key.stop_text_input()
+
+    def clear_search(self, now):
+        self.close_search()
+        self.search_text = ""
+        self.search_due = None
+        if self.query:
+            self.set_query("", now)
+
+    def type_search(self, e, now):
+        """Mientras el campo de búsqueda está abierto, las teclas son para escribir."""
+        if e.type == pygame.TEXTINPUT:
+            if e.text in ("/", "f", "F") and now < getattr(self, "search_eat", 0):
+                return
+            if len(self.search_text) < 40:
+                self.search_text += e.text
+        elif e.key == pygame.K_BACKSPACE:
+            self.search_text = self.search_text[:-1]
+        elif e.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+            self.set_query(self.search_text.strip(), now)
+            self.close_search()
+            return
+        elif e.key == pygame.K_ESCAPE:
+            self.clear_search(now)
+            return
+        else:
+            return
+        self.search_due = now + 0.4          # busca solo cuando se deja de escribir un momento
+
+    def update_search(self, now):
+        if self.search_due is not None and now >= self.search_due:
+            self.search_due = None
+            if self.search_text.strip() != self.query:
+                self.set_query(self.search_text.strip(), now)
+
+    def set_query(self, text, now=None):
+        now = time.monotonic() if now is None else now
+        ok = SEARCH.matcher(text, place_of)
+        if ok is not None and not any(ok(it) for it in self.items):
+            self.say(tr("Nada coincide con “{q}”", q=text), now)    # se queda lo que había
+            return
+        self.query = text if ok is not None else ""
+        self.query_ok = ok
+        self.refilter(now, True)
+
+    def refilter(self, now=None, animate=True):
+        """Rehace la cuadrícula con las fotos que coinciden. Las que salen se van
+        al fondo (se encogen y se desvanecen) y las que quedan se juntan desde
+        el centro, como cuando hay pocas fotos."""
+        now = time.monotonic() if now is None else now
         self.queue = []
+        old = self.plane
+        new = cam.Grid(self.grid_members())
+        if [*old.members] == [*new.members]:
+            return
+        self.plane = new
+        self.hover_amts.clear()
+        self.hover_i = None
+        if self.hero not in new:
+            self.hero = self.morph_i = new.members[0]
+        if not (animate and self.mode == GRID and self.lvl == PHOTOS and not self.lvl_tween):
+            if self.mode == GRID and self.lvl == PHOTOS:
+                s = self.grid_scale()
+                self.jump_camera(*cam.clamp(*new.cell_center(self.hero), s, new, self.vw, self.vh), s)
+            self.regrid = None
+            return
+        # Posición de cada foto antes y después (en coordenadas de cuadrícula).
+        old_pos = {i: old.cell_center(i) for i in old.members}
+        self.regrid = {"old": old, "old_pos": old_pos, "t": Tween((0.0,), (1.0,), REGRID_TIME, EASE_IN_OUT, now),
+                       "cam0": (self.cx, self.cy)}
+        s = self.grid_scale()
+        cx, cy = cam.clamp(*new.cell_center(self.hero), s, new, self.vw, self.vh)
+        if len(new.members) <= 64:          # pocas: se ve toda la colección centrada
+            cx, cy = new.width / 2, new.height / 2
+        self.move_camera(cx, cy, s, REGRID_TIME, now, EASE_IN_OUT)
+        self.long_until = now + REGRID_TIME
 
     # ------------------------------------------------------------------ cámara
 
@@ -333,11 +437,13 @@ class App:
     def set_anchor(self):
         self.anchor = cam.Anchor(self.mx, self.my, self.tcx, self.tcy)
 
-    def nearest(self):
+    def nearest(self):  # noqa: D401
         pitch = C.CELL + C.GAP
         col = min(max(round((self.cx - C.CELL / 2) / pitch), 0), self.plane.cols - 1)
         row = min(max(round((self.cy - C.CELL / 2) / pitch), 0), self.plane.rows - 1)
-        return min(row * self.plane.cols + col, len(self.items) - 1)
+        k = min(row * self.plane.cols + col, self.plane.count - 1)
+        i = self.plane.item_at_slot(k)
+        return i if i is not None else min(self.hero, len(self.items) - 1)
 
     def photo_under_mouse(self):
         px = self.cx + (self.mx - self.vw / 2) / self.s
@@ -1025,13 +1131,28 @@ class App:
         if e.type == pygame.KEYDOWN and e.key in MEDIA_KEYS:
             self.media_key(MEDIA_KEYS[e.key], now)
             return
+        if self.search_open and e.type in (pygame.KEYDOWN, pygame.TEXTINPUT) \
+                and not (e.type == pygame.KEYDOWN and e.key in MEDIA_KEYS):
+            self.type_search(e, now)
+            return
         if (self.pw is not None and self.in_wifi_tab()
                 and e.type in (pygame.KEYDOWN, pygame.TEXTINPUT)):
             self.type_password(e)       # mientras se escribe la contraseña, las teclas son para eso
             return
-        if e.type == pygame.KEYDOWN and e.key == pygame.K_n:
-            self.night_force = not self.night_force   # simula la noche (para probar)
+        if e.type == pygame.KEYDOWN and e.key == pygame.K_n and not self.night_force \
+                and not (e.mod & (pygame.KMOD_CTRL | pygame.KMOD_GUI | pygame.KMOD_ALT)):
+            # Vista previa de la noche: dura hasta que se toque algo (no se queda puesta).
+            self.night_force = True
+            self.night_preview_at = now
             self.woke = False
+            self.say(tr("Vista previa del modo noche · toca cualquier tecla para salir"), now)
+            return
+        if self.night_force and now - self.night_preview_at > 0.6 and (
+                e.type in (pygame.KEYDOWN, pygame.MOUSEBUTTONDOWN, pygame.MOUSEWHEEL, pygame.FINGERDOWN)
+                or (e.type == pygame.MOUSEMOTION and abs(e.rel[0]) + abs(e.rel[1]) > 12)):
+            self.night_force = False
+            self.woke = True
+            self.last_input = now
             return
         if e.type in (pygame.MOUSEMOTION, pygame.MOUSEWHEEL, pygame.MOUSEBUTTONDOWN,
                       pygame.MOUSEBUTTONUP, pygame.KEYDOWN, pygame.FINGERDOWN):
@@ -1126,8 +1247,10 @@ class App:
                 self.close_settings(now)
             else:
                 self.open_settings(now)
-        elif key in (pygame.K_h, pygame.K_SLASH, pygame.K_QUESTION):
+        elif key in (pygame.K_h, pygame.K_QUESTION):
             self.toggle_help(now)
+        elif key == pygame.K_SLASH and self.items:
+            self.open_search(now)
         elif key == pygame.K_p and self.items:
             if self.mode == FRAME:
                 self.enter_grid(now)
@@ -1191,11 +1314,17 @@ class App:
         with TH.using(TH.DARK):
             g.pill(text, self.vw / 2, 24, 14, 1.0)
 
+    def cancel_preview(self):
+        self.night_force = False
+
     def toggle_help(self, now):
         self.help_open = not self.help_open
         self.help_at = now
 
     def on_key(self, e, now):
+        if e.key == pygame.K_f and e.mod & (pygame.KMOD_CTRL | pygame.KMOD_GUI) and self.items:
+            self.open_search(now)
+            return
         if self.help_open:
             self.help_open = False          # cualquier tecla cierra la lista de atajos
             if e.key in (pygame.K_ESCAPE, pygame.K_h, pygame.K_SLASH, pygame.K_QUESTION):
@@ -1422,6 +1551,8 @@ class App:
         st = self.settings
         for k, v in changes.items():
             setattr(st, k, v)
+        if any(k.startswith("night") for k in changes):
+            self.night_force = False          # cambiar la noche cancela la vista previa
         if "theme" in changes:
             self.apply_theme()
         if "language" in changes:
@@ -1446,8 +1577,11 @@ class App:
             else:
                 p.close()
         self.kb = {idx[k]: v for k, v in kb.items() if k in idx}
-        self.plane = cam.Plane(*cam.grid_shape(max(1, len(items))), len(items))
         self.groups = LV.Groups(items)
+        if self.coll_filter and not any(it.collection == self.coll_filter for it in items):
+            self.coll_filter = None
+        self.plane = cam.Grid(self.grid_members())
+        self.regrid = None
         self.queue, self.memory_queue, self.seq_pos, self._next = [], [], None, None
         self.slide_history = []
         self.hover_i = self.hover_group = None
@@ -1522,6 +1656,8 @@ class App:
             self.m = self.m_tween.value(now)[0]
             if self.m_tween.done(now):
                 self.m_tween = None
+        if self.regrid and self.regrid["t"].done(now):
+            self.regrid = None
         if self.lvl_tween and self.lvl_tween.done(now):
             self.lvl_tween = None
         if self.swipe and self.swipe["tw"].done(now):
@@ -2295,11 +2431,12 @@ class App:
     HELP = [
         ("Presentación", [("P", "Empezar o salir de la presentación"), ("← →", "Foto anterior o siguiente"),
                           ("Espacio", "Pausar o seguir el video"), ("Esc", "Volver")]),
-        ("Fotos", [("1 2 3 4", "Años, Meses, Fotos, Colecciones"), ("+ −", "Acercar o alejar")]),
+        ("Fotos", [("1 2 3 4", "Años, Meses, Fotos, Colecciones"), ("+ −", "Acercar o alejar"),
+                   ("/  ·  Ctrl + F", "Buscar (videos, 2019, diciembre, un lugar…)")]),
         ("Ajustes rápidos", [("B · W · A", "Apariencia: oscuro, claro o automático"),
                              ("V", "Fotos, videos o ambos"), ("K", "Ken Burns"), ("R", "Reloj"), ("I", "Fecha y lugar"),
                              ("M", "Un día como hoy"), ("S", "Orden aleatorio"),
-                             ("L", "Brillo automático"), ("N", "Modo noche ahora"),
+                             ("L", "Brillo automático"), ("N", "Vista previa del modo noche"),
                              ("E", "Español o inglés"), (",", "Ajustes"), ("H", "Esta lista"),
                              ("Ctrl + L", "Bloquear el teclado (mantener 3 s)")]),
     ]
@@ -2530,14 +2667,17 @@ class App:
         n = len(self.items)
         radius = C.RADIUS_GRID * s
         skip_morph = self.m > 0.001 and self.lvl == PHOTOS and not self.lvl_tween
+        if self.regrid:
+            self.draw_regrid(tx, ty, s, alpha, bg, radius, skip_morph)
+            return
         for row in range(r0, r1 + 1):
             for col in range(c0, c1 + 1):
-                i = row * self.plane.cols + col
-                if i >= n or (i == self.morph_i and skip_morph):
+                i = self.plane.item_at_slot(row * self.plane.cols + col)
+                if i is None or i >= n or (i == self.morph_i and skip_morph):
                     continue
                 if i in self.hover_amts:
                     continue            # las levantadas van encima, después
-                a = alpha * (1.0 if self.matches(i) else 0.14)
+                a = alpha
                 cx, cy = self.plane.cell_center(i)
                 x, y = tx + s * (cx - C.CELL / 2), ty + s * (cy - C.CELL / 2)
                 self.draw_tile(self.items[i], x, y, C.CELL * s, C.CELL * s, a, radius, bg, idx=i, badge=True)
@@ -2549,8 +2689,44 @@ class App:
             w = C.CELL * s * k
             x = tx + s * cx - w / 2
             y = ty + s * cy - w / 2
-            a = alpha * (1.0 if self.matches(i) else 0.14)
-            self.draw_tile(self.items[i], x, y, w, w, a, radius * k, bg, idx=i, badge=True)
+            self.draw_tile(self.items[i], x, y, w, w, alpha, radius * k, bg, idx=i, badge=True)
+
+    def draw_regrid(self, tx, ty, s, alpha, bg, radius, skip_morph):
+        """Cambio de colección o búsqueda: las fotos que salen se van al fondo y
+        las que quedan viajan de su lugar a la cuadrícula nueva."""
+        rg = self.regrid
+        e = rg["t"].value(self._now)[0]
+        old_pos, new = rg["old_pos"], self.plane
+        n = len(self.items)
+        pad = C.CELL * s
+
+        def visible(x, y, w):
+            return x + w > -pad and x < self.vw + pad and y + w > -pad and y < self.vh + pad
+        # 1) Las que salen: se encogen hacia el fondo y se desvanecen.
+        out_a = alpha * (1.0 - e)
+        if out_a > 0.01:
+            k = lerp(1.0, 0.8, e)
+            w = C.CELL * s * k
+            for i, (cx, cy) in old_pos.items():
+                if i in new or i >= n:
+                    continue
+                x, y = tx + s * cx - w / 2, ty + s * cy - w / 2
+                if visible(x, y, w):
+                    self.draw_tile(self.items[i], x, y, w, w, out_a, radius * k, bg, idx=i, badge=False)
+        # 2) Las que quedan (o llegan): de su lugar anterior al nuevo, al frente.
+        for i in new.members:
+            if i >= n or (i == self.morph_i and skip_morph):
+                continue
+            nx, ny = new.cell_center(i)
+            if i in old_pos:
+                ox, oy = old_pos[i]
+                cx, cy, k, a = lerp(ox, nx, e), lerp(oy, ny, e), 1.0, alpha
+            else:                                   # llega: crece desde el fondo
+                cx, cy, k, a = nx, ny, lerp(0.8, 1.0, e), alpha * e
+            w = C.CELL * s * k
+            x, y = tx + s * cx - w / 2, ty + s * cy - w / 2
+            if a > 0.01 and visible(x, y, w):
+                self.draw_tile(self.items[i], x, y, w, w, a, radius * k, bg, idx=i, badge=True)
 
     def draw_tile(self, item, x, y, w, h, alpha, radius, bg, prefer_screen=False, idx=None, badge=False, snap=True):
         g = self.gfx
@@ -2911,6 +3087,27 @@ class App:
             g.round_rect(sr[0] + sr[2] - 12, sr[1] + 1, 11, 11, ORANGE, a, 5.5)
         r = g.icon_button("play", sr[0] - 10 - 44, y, alpha=a, icon_size=22)
         self.hit(r, self.start_presentation)
+        # Buscar: la lupa abre el campo (también Control + F o la tecla /).
+        if self.search_open:
+            fw = 300
+            fx = r[0] - 10 - fw
+            g.round_rect(fx, y, fw, 44, T.button, a)
+            g.draw_icon("search", fx + 14, y + 13, 18, T.text_secondary, a)
+            text = self.search_text
+            if text:
+                tt = g.text(text, 15, T.text)
+                tw, th = g.tsize(tt)
+                tt.alpha = int(255 * a)
+                tt.draw(dstrect=(fx + 42, y + (44 - th) / 2, tw, th))
+            else:
+                tw = 0
+                g.label(tr("videos, 2019, diciembre, Cancún…"), fx + 42, y + 13, 14, a, color=T.text_secondary)
+            if int(now * 2) % 2 == 0:
+                g.rect(fx + 43 + tw, y + 12, 2, 20, T.text, a)
+            self.hit((fx, y, fw, 44), lambda now: None)
+        else:
+            lr = g.icon_button("search", r[0] - 10 - 44, y, alpha=a, icon_size=20)
+            self.hit(lr, lambda now: self.open_search(now))
         # Izquierda: el nivel (años, meses, fotos, colecciones).
         options = [(YEARS, tr("Años")), (MONTHS, tr("Meses")), (PHOTOS, tr("Fotos"))]
         if self.groups.coll_list:
@@ -2921,9 +3118,14 @@ class App:
         for key, rect in segs:
             if key not in disabled:
                 self.hit(rect, lambda now, k=key: self.pick_level(k, now))
+        chip_x = seg_x + total + 12
         if self.coll_filter:
-            fr = g.button(f"{self.coll_filter}  ×", seg_x + total + 12, y + 6, h=32, alpha=a, active=True, size=13, pad=14)
-            self.hit(fr, lambda now: self.set_filter(None))
+            fr = g.button(f"{self.coll_filter}  ×", chip_x, y + 6, h=32, alpha=a, active=True, size=13, pad=14)
+            self.hit(fr, lambda now: self.set_filter(None, now))
+            chip_x = fr[0] + fr[2] + 8
+        if self.query and not self.search_open:
+            qr_ = g.button(f"“{self.query}”  ×", chip_x, y + 6, h=32, alpha=a, active=True, size=13, pad=14)
+            self.hit(qr_, lambda now: self.clear_search(now))
         # Abajo: contador y zoom
         if self.lvl == PHOTOS:
             shown = [self.items[i] for i in range(len(self.items)) if self.matches(i)]
@@ -3112,17 +3314,17 @@ class App:
                        "Calibrar", lambda now: self.start_calib(now))
         elif self.settings_tab == "night":
             choice("Modo noche", "Reloj o pantalla apagada a cierta hora", "night",
-                   [(NIGHT.NEVER, "Nunca"), (NIGHT.SCHEDULE, "Por horario")])
+                   [(NIGHT.NEVER, "Nunca"), (NIGHT.SCHEDULE, "Por horario")], on_change=self.cancel_preview)
             choice("Horario", "De noche a mañana", "night_hours",
                    [("22-7", "22:00–7:00"), ("23-7", "23:00–7:00"), ("0-6", "0:00–6:00")],
-                   enabled=st.night == NIGHT.SCHEDULE)
+                   enabled=st.night == NIGHT.SCHEDULE, on_change=self.cancel_preview)
             choice("De noche", "Qué se ve en la pantalla", "night_style",
                    [("off", "Apagada"), ("window", "Reloj ventana"), ("classic", "Reloj clásico")],
-                   enabled=st.night != NIGHT.NEVER)
+                   enabled=st.night != NIGHT.NEVER, on_change=self.cancel_preview)
             choice("Color del reloj clásico", "Rojo: el que menos molesta", "night_color",
                    [("white", "Blanco"), ("blue", "Azul"), ("red", "Rojo")],
                    enabled=st.night != NIGHT.NEVER and st.night_style == "classic")
-            g.label(tr("Tecla N: la noche ahora · H: todos los atajos"), x + 28, ry[0] - 4, 12, color=T.text_secondary)
+            g.label(tr("Tecla N: vista previa de la noche · H: todos los atajos"), x + 28, ry[0] - 4, 12, color=T.text_secondary)
         elif self.settings_tab == "connect":
             subs = ([("wifi", "WiFi")] if self.wifi.available else []) + [("phone", tr("Celular"))]
             if self.connect_tab not in dict(subs):
@@ -3514,6 +3716,7 @@ class App:
         else:
             self.update_idle(now)
         self.update_lock(now)
+        self.update_search(now)
         self.check_wifi_joined(now)
         # Busca versión nueva sola: al minuto de arrancar y luego cada 6 horas.
         up = self.updater
