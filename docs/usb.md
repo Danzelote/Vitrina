@@ -30,14 +30,14 @@ No hace falta presionar nada más: la imagen arranca sola, sin el menú invisibl
 
 1. **WiFi:** en la pantalla de inicio, **Configurar WiFi**. Con cámara, **Escanear código** y muestra el código QR del WiFi desde tu celular (iPhone: app Contraseñas → Wi-Fi → tu red → Mostrar código QR de la red; Android: Ajustes → Wi-Fi → Compartir). Si no, elige tu red y escribe la contraseña con el teclado de la Mac.
 2. **Celular:** escanea el código QR que aparece y sube unas fotos.
-3. **Apagar:** la tecla de encendido (o Ajustes → Pantalla → **Apagar…**) pregunta si quieres **Reposo**, **Apagar** o **Reiniciar**. Dejarla presionada unos segundos apaga de golpe.
+3. **Apagar:** la tecla de encendido (o Ajustes → General → **Apagar…**) pregunta si quieres **Reposo**, **Apagar** o **Reiniciar**. Dejarla presionada unos segundos apaga de golpe.
 4. **Cerrar la tapa** pone la Mac en reposo; al abrirla sigue donde se quedó.
 
 ## Instalar en la Mac
 
 Cuando ya probaste que todo funciona desde la USB:
 
-1. **Ajustes → Pantalla → Instalar en esta Mac…**
+1. **Ajustes → General → Instalar en esta Mac…**
 2. Revisa el disco que encontró y lee el aviso: **se borra macOS** con sus programas y archivos. Si quieres conservar algo de esa Mac, sácalo antes. La **recuperación de macOS** (⌘R al prender) se conserva, por si algún día quieres volver a instalarlo; en un disco sin ella se usa el disco completo.
 3. **Continuar** → espera la cuenta atrás → **Borrar e instalar**. Tarda unos minutos; no apagues la Mac ni quites la USB.
 4. Al terminar: quita la USB y **Reiniciar**. Vitrina arranca sola desde el disco.
@@ -48,7 +48,7 @@ Detalles técnicos: el disco queda con una partición de arranque EFI (300 MB) y
 
 ## Actualizar
 
-Ya instalada, Vitrina se actualiza desde internet sin borrar fotos ni ajustes: **Ajustes → Pantalla → Actualizaciones** (en la Mac) o **Ajustes → Actualización** (en el celular). Baja de este repositorio el paquete `vitrina-app-<versión>.tar.gz` de la versión más nueva, revisa que llegó completo, cambia la app y se reinicia. Si la versión nueva no arranca, regresa sola a la anterior. Los cambios del sistema base (kernel, controladores) siguen necesitando reinstalar con la USB.
+Ya instalada, Vitrina se actualiza desde internet sin borrar fotos ni ajustes: **Ajustes → General → Actualizaciones** (en la Mac; un punto naranja en el engrane avisa cuando hay una nueva) o **Ajustes → General** (en el celular). Baja de este repositorio el paquete `vitrina-app-<versión>.tar.gz` de la versión más nueva, revisa que llegó completo, cambia la app y se reinicia. Si la versión nueva no arranca, regresa sola a la anterior. Los cambios del sistema base (kernel, controladores) siguen necesitando reinstalar con la USB.
 
 ## Qué revisar en la Mac vieja
 

@@ -1,3 +1,3 @@
 """Vitrina: convierte una Mac vieja en un portarretratos digital."""
 
-__version__ = "0.11.2"
+__version__ = "1.0.0"

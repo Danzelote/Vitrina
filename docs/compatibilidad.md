@@ -6,7 +6,7 @@ Modelos probados y lo que se encontró en cada uno. Si pruebas Vitrina (o Linux 
 
 | Modelo | Procesador | RAM | Gráfica | WiFi | Arranque | Pantalla | Trackpad | Sonido | Video | Notas |
 |---|---|---|---|---|---|---|---|---|---|---|
-| MacBook 13" mediados de 2009 (A1181, blanca) | Core 2 Duo 2.13 GHz | 2 GB DDR2 | NVIDIA GeForce 9400M | Broadcom BCM4322 `[14e4:432b]` | ⚠️ EFI con menú invisible | ✅ | ✅ | ✅ | ✅ | Ver abajo |
+| MacBook 13" mediados de 2009 (A1181, blanca) | Core 2 Duo 2.13 GHz | 2 GB DDR2 | NVIDIA GeForce 9400M | Broadcom BCM4322 `[14e4:432b]` | ✅ con Vitrina (Debian live: menú invisible) | ✅ | ✅ | ✅ | ✅ | Vitrina 1.0 instalada, conservando la recuperación de macOS. Ver abajo |
 
 ## Hallazgos
 

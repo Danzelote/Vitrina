@@ -81,16 +81,23 @@ jobs:
         run: |
           msg=$(tail -n 40 out/prueba.txt 2>/dev/null | sed 's/%/%25/g' | sed ':a;N;$!ba;s/\n/%0A/g')
           echo "::notice title=Prueba en máquina virtual (${{ steps.prueba.outcome }})::$msg"
+      - name: Notas de la versión
+        shell: bash
+        run: |
+          v=$(sed -n 's/^__version__ = "\(.*\)"/\1/p' app/vitrina/__init__.py)
+          { if [ -f "docs/notas/$v.md" ]; then cat "docs/notas/$v.md"; echo; echo '---'; fi
+            echo 'Imagen para la USB. Grábala con balenaEtcher y arranca la Mac con la tecla ⌥ Option presionada.'
+            echo "Instrucciones: docs/usb.md. Prueba automática en máquina virtual: ${{ steps.prueba.outcome }}. Prueba del instalador: ${{ steps.instalador.outcome }}."
+          } > out/notas.md
       - name: Publicar
         uses: softprops/action-gh-release@v2
         with:
-          prerelease: true
+          prerelease: ${{ startsWith(steps.version.outputs.tag, 'v0.') }}
+          make_latest: ${{ !startsWith(steps.version.outputs.tag, 'v0.') }}
           tag_name: ${{ steps.version.outputs.tag }}
           target_commitish: ${{ github.sha }}
           name: Vitrina ${{ steps.version.outputs.tag }}
-          body: |
-            Imagen para la USB. Grábala con balenaEtcher y arranca la Mac con la tecla ⌥ Option presionada.
-            Instrucciones: docs/usb.md. Prueba automática en máquina virtual: ${{ steps.prueba.outcome }}. Prueba del instalador: ${{ steps.instalador.outcome }}.
+          body_path: out/notas.md
           files: |
             out/vitrina-*.iso
             out/vitrina-app-*.tar.gz
