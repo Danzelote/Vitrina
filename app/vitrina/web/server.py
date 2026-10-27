@@ -281,6 +281,9 @@ class Handler(BaseHTTPRequestHandler):
                      brillo_minimo=self.v.app.settings.min_brightness,
                      brillo_maximo_raw=self.v.app.backlight.max,
                      camara_qr=QRSCAN.LAST_LOG,
+                     dibuja=self.v.app.gpu, cuadros_por_segundo=self.v.app.meter.fps,
+                     cpu_app_pct=self.v.app.meter.app_pct, cpu_mac_pct=self.v.app.meter.mac_pct,
+                     **__import__("vitrina.power", fromlist=["sensors"]).sensors(),
                      trabada=__import__("vitrina.watchdog", fromlist=["REPORTS"]).REPORTS)
             return self.send(200, json.dumps(d, ensure_ascii=False, indent=2), "application/json; charset=utf-8")
         if path == "/api/photos":

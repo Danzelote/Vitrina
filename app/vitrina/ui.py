@@ -37,6 +37,7 @@ from . import watchdog as WATCH  # noqa: E402
 from . import updater as UPD  # noqa: E402
 from . import usbimport as USBI  # noqa: E402
 from . import search as SEARCH  # noqa: E402
+from . import power as POWER  # noqa: E402
 from . import config as C  # noqa: E402
 from . import levels as LV  # noqa: E402
 from . import video as VID  # noqa: E402
@@ -96,6 +97,8 @@ class App:
                 self.win.set_fullscreen(True)
             self.ren = Renderer(self.win, accelerated=-1, vsync=True)
         self.gfx = Gfx(self.ren)
+        self.gpu = POWER.renderer_info(self.win)    # ¿dibuja la tarjeta de video o el procesador?
+        self.meter = POWER.Meter()
         self.fit_to_window()
         self.items = list(items)
         self.processor = processor
@@ -3745,6 +3748,42 @@ class App:
         self.woke = True
         print("Vitrina: despertó del reposo", flush=True)
 
+    def calm(self, now):
+        """¿La presentación está quieta? (sin fundido, sin controles, sin avisos,
+        sin videos y sin que nadie la toque): entonces no hace falta dibujar 60
+        veces por segundo."""
+        return (self.mode == FRAME and bool(self.items) and self.m >= 0.999 and self.night <= 0.0
+                and not self.fade and not self.cam_tween and not self.lvl_tween and not self.glide
+                and not self.players and not self.settings_open and self.settings_amt <= 0.001
+                and not self.toast and not self.hud and not self.intro and not self.shutting
+                and not self.inst and not self.power_dlg and not self.help_open and not self.keys_down
+                and not self.search_open and not self.usb_dialog()
+                and now - self.last_input > 3.0 and now - self.mouse_at > 3.0)
+
+    def frame_rate(self, now):
+        """Cuadros por segundo que hacen falta ahora (menos = menos calor)."""
+        if self.sleeping:
+            return 2                    # apagada: casi sin gastar
+        if self.night >= 0.999:
+            if self.settings.night_style == "window" and self.items:
+                return 20 if self.fade else 10      # la presentación tenue dentro de los números
+            return 1                    # el reloj solo cambia cada minuto
+        if not self.calm(now):
+            return 60                   # fundidos, cuadrícula, visor, videos: todo fluido
+        if self.kb_active(self.morph_i):
+            return 30                   # Ken Burns: movimiento lento, 30 alcanza
+        return 2                        # foto quieta
+
+    def rest(self, seconds):
+        """Espera sin gastar, pero despierta en cuanto llega una tecla, el mouse
+        o algo del celular (para que nunca se sienta lenta)."""
+        until = time.monotonic() + seconds
+        while True:
+            left = until - time.monotonic()
+            if left <= 0 or pygame.event.peek() or not self.events.empty():
+                return
+            time.sleep(min(left, 0.012))
+
     def run(self):
         clock = pygame.time.Clock()
         self.frame_at = time.monotonic()
@@ -3752,13 +3791,17 @@ class App:
         while self.running:
             self.frame_at = time.monotonic()
             self.step()
-            if self.sleeping:
-                fps = 5                 # apagada: casi sin gastar
-            elif self.night >= 0.999:
-                fps = 24 if self.settings.night_style == "window" else 4
+            now = time.monotonic()
+            self.meter.tick(now)
+            fps = self.frame_rate(now)
+            if fps >= 60:
+                clock.tick(60)
+            elif fps >= 20:
+                # Al ritmo de la pantalla (60 Hz): un cuadro cada 2 o 3 refrescos,
+                # siempre igual, para que el movimiento no dé saltitos.
+                self.rest((round(60 / fps) - 1) / 60 + 0.002)
             else:
-                fps = 60
-            clock.tick(fps)
+                self.rest(1.0 / fps - (now - self.frame_at))
         self.shutdown()
 
     def shutdown(self):
