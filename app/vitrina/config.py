@@ -9,9 +9,14 @@ GAP = 16            # espacio entre miniaturas
 RADIUS_GRID = 14    # esquinas redondeadas en la cuadrícula
 RADIUS_VIEW = 8     # esquinas en el visor
 
-# Niveles de zoom de la cuadrícula (1 = ~5 columnas en una pantalla de 1280 px)
-ZOOMS = [0.62, 0.8, 1.0, 1.3, 1.7]
-DEFAULT_ZOOM = 2
+# Niveles de zoom de la cuadrícula (1 = ~5 columnas en una pantalla de 1280 px).
+# Los primeros cuatro son el mosaico: muchas fotos chiquitas para ver toda la
+# biblioteca de un vistazo (solo si hace falta: con pocas fotos no se llega ahí).
+ZOOMS = [0.15, 0.22, 0.32, 0.45, 0.62, 0.8, 1.0, 1.3, 1.7]
+ZOOM_BASE = 4       # 0.62: el más lejano de la cuadrícula normal
+DEFAULT_ZOOM = 6
+MINI = 48           # lado de las miniaturas del mosaico (px)
+MINI_BELOW = 72     # cuadritos de este tamaño o menos usan las del mosaico
 
 # Márgenes de pantalla (px) que la cuadrícula respeta en sus límites
 MARGIN_X = 40

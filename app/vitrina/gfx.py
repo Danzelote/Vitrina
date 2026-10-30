@@ -59,8 +59,9 @@ class Loader:
                 self.pending.move_to_end(key)
                 return
             self.pending[key] = path
-            while len(self.pending) > 400:   # olvida lo que ya no se necesita
-                self.pending.popitem(last=False)
+            while len(self.pending) > 1500:  # olvida lo que ya no se necesita
+                old, _ = self.pending.popitem(last=False)
+                self.done.append((old, None, None))     # así se puede volver a pedir
             self.cv.notify()
 
     def take(self, limit):
@@ -76,6 +77,8 @@ class Loader:
                 key, path = self.pending.popitem(last=True)
             try:
                 with Image.open(path) as img:
+                    if key[0] == "m":
+                        img = mini_image(img)
                     # "g": versión en blanco y negro (para el reloj de noche)
                     img = img.convert("L").convert("RGB") if key[0] == "g" else img.convert("RGB")
                     data, size = img.tobytes(), img.size
@@ -83,6 +86,66 @@ class Loader:
                 data, size = None, None
             with self.cv:
                 self.done.append((key, data, size))
+
+
+def mini_image(img):
+    """Cuadrito del mosaico: el centro de la foto, de C.MINI px por lado."""
+    img.draft("RGB", (C.MINI * 2, C.MINI * 2))      # el JPEG se decodifica ya reducido (rápido)
+    w, h = img.size
+    side = min(w, h)
+    box = ((w - side) // 2, (h - side) // 2, (w - side) // 2 + side, (h - side) // 2 + side)
+    return img.convert("RGB").resize((C.MINI, C.MINI), Image.BILINEAR, box=box, reducing_gap=2.0)
+
+
+class Minis:
+    """Las miniaturas del mosaico, juntas en unas cuantas hojas (texturas
+    grandes). Dibujar cientos así cuesta casi lo mismo que unas pocas, y no
+    llena la memoria de video (cada foto ocupa 48×48 en vez de 256×384)."""
+
+    PAGE = 1024
+    MAX_PAGES = 16                  # ~7000 fotos; si hay más, se reciclan las menos vistas
+
+    def __init__(self, renderer):
+        self.r = renderer
+        self.per_row = self.PAGE // C.MINI
+        self.per_page = self.per_row * self.per_row
+        self.pages = []
+        self.slots = OrderedDict()  # clave -> número de casilla
+        self.free = []
+
+    def get(self, key):
+        n = self.slots.get(key)
+        if n is not None:
+            self.slots.move_to_end(key)
+        return n
+
+    def src(self, n):
+        page, k = divmod(n, self.per_page)
+        row, col = divmod(k, self.per_row)
+        return self.pages[page], pygame.Rect(col * C.MINI, row * C.MINI, C.MINI, C.MINI)
+
+    def put(self, key, surf):
+        if key in self.slots:
+            n = self.slots[key]
+        elif self.free:
+            n = self.free.pop()
+        elif len(self.slots) < len(self.pages) * self.per_page:
+            n = len(self.slots)
+        elif len(self.pages) < self.MAX_PAGES:
+            tex = Texture(self.r, (self.PAGE, self.PAGE))
+            tex.blend_mode = pygame.BLENDMODE_BLEND
+            self.pages.append(tex)
+            n = len(self.slots)
+        else:
+            _, n = self.slots.popitem(last=False)
+        self.slots[key] = n
+        tex, rect = self.src(n)
+        rgba = pygame.Surface(surf.get_size(), pygame.SRCALPHA, 32)
+        rgba.blit(surf, (0, 0))
+        tex.update(rgba, tuple(rect))      # con una tupla: con Rect, pygame-ce ignora la posición
+
+    def clear(self):
+        self.pages, self.slots, self.free = [], OrderedDict(), []
 
 
 class Gfx:
@@ -113,6 +176,7 @@ class Gfx:
         self.loads_left = 0
         self.loader = Loader()
         self.requested = set()
+        self.minis = Minis(renderer)
         self.dpi = 1.0  # píxeles reales por punto (2 en pantallas Retina)
 
     # -- básicos ------------------------------------------------------------
@@ -145,6 +209,9 @@ class Gfx:
             (kind, key), data, size = batch[0]
             self.requested.discard((kind, key))
             if data is None:
+                continue
+            if kind == "m":
+                self.minis.put(key, pygame.image.frombuffer(data, size, "RGB"))
                 continue
             tex = self._tex(pygame.image.frombuffer(data, size, "RGB"))
             {"t": self.thumbs, "s": self.screens, "b": self.backdrops, "g": self.grays}[kind].put(key, tex)
@@ -217,6 +284,29 @@ class Gfx:
         if not item.ready:
             return None
         return self._cached(self.thumbs, "t", item.key, item.thumb_path)
+
+    def mini(self, item, x, y, w, h, alpha=1.0):
+        """Dibuja el cuadrito del mosaico (None si aún no está; ya se pidió)."""
+        if not item.ready or alpha <= 0.003:
+            return None
+        n = self.minis.get(item.key)
+        if n is None:
+            if ("m", item.key) not in self.requested and item.thumb_path:
+                self.requested.add(("m", item.key))
+                self.loader.request(("m", item.key), item.thumb_path)
+            return None
+        tex, src = self.minis.src(n)
+        x, y, w, h = self.snap(x, y, w, h)
+        tex.alpha = int(255 * min(alpha, 1.0))
+        tex.draw(srcrect=src, dstrect=(x, y, w, h))
+        return True
+
+    def circle_at(self, cx, cy, r, color, alpha=1.0):
+        if alpha <= 0.003 or r <= 0:
+            return
+        self.circle.color = color[:3]
+        self.circle.alpha = int(255 * min(alpha, 1.0))
+        self.circle.draw(dstrect=(cx - r, cy - r, 2 * r, 2 * r))
 
     def screen(self, item, force=False):
         if not item.ready:

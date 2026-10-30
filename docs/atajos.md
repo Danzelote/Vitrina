@@ -9,7 +9,7 @@ En la Vitrina, la tecla **H** muestra esta lista en pantalla.
 | **Espacio** | Pausa o sigue el video |
 | **Esc** | Volver |
 | **1 2 3 4** | Años, Meses, Fotos, Colecciones |
-| **+ −** | Acercar o alejar la cuadrícula |
+| **+ −** | Acercar o alejar la cuadrícula (bien lejos, un mosaico con toda la biblioteca) |
 | **B · W · A** | Apariencia: oscuro (*black*), claro (*white*) o automático |
 | **V** | Mostrar en la presentación: fotos y videos → solo fotos → solo videos |
 | **K** | Ken Burns: apagado → solo zoom → zoom y paneo |

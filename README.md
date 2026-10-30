@@ -12,7 +12,7 @@ Vitrina se instala en una Mac Intel vieja (2006–2015) y la convierte en un por
 ## Qué hace
 
 - **Presentación a pantalla completa** de fotos y videos, con transiciones suaves, efecto Ken Burns, reloj, fecha y lugar, y "un día como hoy".
-- **Al mover el mouse**, la foto se encoge hasta su lugar en una cuadrícula que puedes explorar y acercar con dos dedos. Al alejarte, las fotos se agrupan por meses y por años.
+- **Al mover el mouse**, la foto se encoge hasta su lugar en una cuadrícula que puedes explorar y acercar con dos dedos. Al alejarte se vuelve un mosaico con toda tu biblioteca de un vistazo, y más lejos las fotos se agrupan por meses y por años.
 - **Colecciones y búsqueda**: elige una colección o escribe *videos*, *2019*, *diciembre* o un lugar, y la cuadrícula se reacomoda solo con esas.
 - **Las fotos llegan desde tu celular**: escaneas un código QR en la pantalla y subes fotos por tu WiFi. Sin cuentas, sin nube y sin app que instalar. Desde el celular también puedes borrar, ordenar en colecciones y cambiar ajustes.
 - **También desde una memoria USB**: al conectarla, ofrece importar sus fotos.

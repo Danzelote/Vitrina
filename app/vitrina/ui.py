@@ -299,8 +299,18 @@ class App:
         aw = self.vw - 2 * C.MARGIN_X
         ah = self.vh - C.MARGIN_TOP - C.MARGIN_BOTTOM
         fits = [k for k, z in enumerate(C.ZOOMS)
-                if self.plane.width * z <= aw and self.plane.height * z <= ah]
+                if k >= C.ZOOM_BASE and self.plane.width * z <= aw and self.plane.height * z <= ah]
         return max(fits) if fits else C.DEFAULT_ZOOM
+
+    def min_zoom(self):
+        """El zoom más lejano que tiene sentido: hasta donde se ve toda la
+        biblioteca (más lejos sería espacio vacío). Nunca más cerca que la
+        cuadrícula normal de antes."""
+        aw = self.vw - 2 * C.MARGIN_X
+        ah = self.vh - C.MARGIN_TOP - C.MARGIN_BOTTOM
+        fits = [k for k, z in enumerate(C.ZOOMS)
+                if self.plane.width * z <= aw and self.plane.height * z <= ah]
+        return min(C.ZOOM_BASE, max(fits)) if fits else 0
 
     def big_dims(self, item, kind):
         ar = item.aspect if item.ready else 1.6
@@ -810,7 +820,7 @@ class App:
         self.hover_i = None
         self.last_move = now
 
-    def to_photos(self, i, now, origin=None, zi=0):
+    def to_photos(self, i, now, origin=None, zi=C.ZOOM_BASE):
         self.zi = zi
         s = self.grid_scale()
         self.jump_camera(*cam.clamp(*self.plane.cell_center(i), s, self.plane, self.vw, self.vh), s)
@@ -873,14 +883,15 @@ class App:
             if can_change_level:
                 (self.level_in if d > 0 else self.level_out)(now, at_mouse)
             return
-        zi = min(max(self.zi + d, 0), len(C.ZOOMS) - 1)
+        lo = min(self.min_zoom(), self.zi)
+        zi = min(max(self.zi + d, lo), len(C.ZOOMS) - 1)
         if zi == self.zi:
             if d < 0 and can_change_level:
                 self.level_out(now, at_mouse)
             return
         s0, s1 = C.ZOOMS[self.zi], C.ZOOMS[zi]
         self.zi = zi
-        if zi == 0:
+        if zi == lo:
             self.edge_at = now
         fx, fy = (self.mx, self.my) if at_mouse and self.inside else (self.vw / 2, self.vh / 2)
         nx, ny = cam.zoom_at(self.tcx, self.tcy, s0, s1, fx, fy, self.vw, self.vh)
@@ -1650,7 +1661,7 @@ class App:
                 if self.mode == GRID and self.lvl == PHOTOS:
                     self.set_anchor()   # el mouse retoma desde donde está ahora
         elif self.mode == GRID:
-            tau = (0.45 + 0.13 * self.zi) / 3.5  # más inercia con zoom alto
+            tau = (0.45 + 0.13 * max(0, self.zi - C.ZOOM_BASE)) / 3.5  # más inercia con zoom alto
             k = 1 - math.exp(-dt / tau)
             self.cx += (self.tcx - self.cx) * k
             self.cy += (self.tcy - self.cy) * k
@@ -2688,7 +2699,9 @@ class App:
             if i >= n or (i == self.morph_i and skip_morph):
                 continue
             cx, cy = self.plane.cell_center(i)
-            k = 1 + 0.07 * amt
+            # En el mosaico se levanta mucho más, para que se vea cuál es.
+            lift = 0.07 if C.CELL * s > C.MINI_BELOW else 1.4
+            k = 1 + lift * amt
             w = C.CELL * s * k
             x = tx + s * cx - w / 2
             y = ty + s * cy - w / 2
@@ -2733,6 +2746,19 @@ class App:
 
     def draw_tile(self, item, x, y, w, h, alpha, radius, bg, prefer_screen=False, idx=None, badge=False, snap=True):
         g = self.gfx
+        if w <= C.MINI_BELOW and h <= C.MINI_BELOW and not prefer_screen:
+            # Mosaico: miniaturas diminutas, todas en unas cuantas hojas (ligero
+            # aunque haya cientos en pantalla). Sin esquinas: se ven como teselas.
+            if g.mini(item, x, y, w, h, alpha) is None:
+                big = g.thumbs.get(item.key)             # mientras, la normal si ya estaba
+                if big is not None:
+                    g.image(big, x, y, w, h, alpha)
+                else:
+                    g.rect(x, y, w, h, T.placeholder, alpha)
+            if badge and item.is_video and w >= 14:
+                d = max(3.0, w * 0.12)                  # puntito: es un video
+                g.circle_at(x + d * 0.9 + d / 2, y + h - d * 0.9 - d / 2, d / 2, (255, 255, 255), alpha * 0.95)
+            return
         vtex, va = self.video_layer(idx, self._now) if idx is not None and item.is_video else (None, 0.0)
         tex = vtex if va >= 1.0 else None
         if tex is None and prefer_screen:
@@ -3814,6 +3840,7 @@ class App:
         g = self.gfx
         for cache in (g.thumbs, g.screens, g.backdrops, g.texts, g.pills):
             cache.clear()
+        g.minis.clear()
         g.white = g.corner = g.gradient = g.circle = None
         g.grays.clear()
         self.glyphs.cache.clear()
