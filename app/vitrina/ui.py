@@ -80,6 +80,14 @@ def inside(rect, x, y):
     return rect is not None and rect[0] <= x <= rect[0] + rect[2] and rect[1] <= y <= rect[1] + rect[3]
 
 
+SHORT_VIDEO = 5.0       # videos de menos de esto se repiten (como un GIF)
+SHORT_MIN_SHOW = 6.0    # y se quedan al menos esto en la presentación
+
+
+def is_short(item):
+    return item.is_video and 0 < (item.duration or 0) < SHORT_VIDEO
+
+
 class App:
     def __init__(self, items, processor=None, fullscreen=False, invert_zoom=False, size=(1280, 800),
                  debug_input=False, lib=None, splash=None):
@@ -209,6 +217,8 @@ class App:
         self.woke = False
         self.last_input = now
         self.sleeping = False
+        self.night_slow = False
+        self.jitter, self.jitter_at = [0, 0], 0.0     # movimiento neto del mouse (presentación)
         self.sensor = NIGHT.light_sensor()
         self.glyphs = NC.Glyphs(self.ren)
         self.wifi = WIFI.Wifi()
@@ -480,6 +490,8 @@ class App:
         # (HEVC, 4K) son demasiado pesados y se ve la portada mientras tanto.
         if not (VID.AVAILABLE and item.is_video and item.ready and item.video_ready):
             return
+        if role in ("frame", "next", "view", "view_next", "warm") and is_short(item):
+            loop = True     # como un GIF: se repite sin cortes (la presentación decide cuándo sigue)
         try:
             p = VID.Player(self.ren, path or item.play_path, self.video_size(item, max_w), audio=audio,
                            loop=loop, start_paused=start_paused)
@@ -993,9 +1005,15 @@ class App:
             self.players["frame"] = self.players.pop("next")
 
     def slide_length(self):
-        """Las fotos duran SLIDE_TIME; los videos, lo que duran (hasta 1 minuto)."""
+        """Las fotos duran SLIDE_TIME; los videos, lo que duran (hasta 1 minuto).
+        Los cortos (menos de 5 s, como los GIF) se repiten las veces elegidas,
+        y al menos ~6 s en pantalla para que alcancen a verse."""
         item = self.items[self.hero]
         if item.is_video and self.player_for("frame", self.hero):
+            if is_short(item):
+                d = max(item.duration, 0.3)
+                times = max(int(self.settings.short_loops), math.ceil(SHORT_MIN_SHOW / d))
+                return times * d - 0.6
             return max(C.SLIDE_TIME, min(item.duration, 60.0)) - 0.6
         return C.SLIDE_TIME
 
@@ -1874,6 +1892,7 @@ class App:
             duration = NIGHT.REDIM_TIME if self.woke else NIGHT.DIM_TIME
             if self.night_force:
                 duration = 8.0                  # la simulación pasa en segundos
+        self.night_slow = duration >= 60 and not self.night_force   # 20 min: no hace falta dibujar rápido
         step = dt / duration
         if self.night < target:
             self.night = min(target, self.night + step)
@@ -3251,7 +3270,7 @@ class App:
 
     def draw_settings(self, now):
         g = self.gfx
-        w, h = 620, 680
+        w, h = 620, 744
         h = min(h, self.vh - 40)
         x, y = (self.vw - w) / 2, (self.vh - h) / 2
         g.round_rect(x, y, w, h, T.panel, 1.0, 28)
@@ -3325,6 +3344,8 @@ class App:
             switch("Orden aleatorio", "Mezcla las fotos", "shuffle", reset_queue)
             choice("Volver a la presentación", "Sin mover el mouse", "idle_seconds",
                    [(10, "10 s"), (15, "15 s"), (30, "30 s"), (60, "1 min")])
+            choice("Repetir videos cortos", "Los de menos de 5 s (y los GIF)", "short_loops",
+                   [(1, "1 vez"), (2, "2"), (4, "4"), (5, "5")])
         elif self.settings_tab == "screen":
             choice("Apariencia", "Automático: claro de día", "theme",
                    [("light", "Claro"), ("dark", "Oscuro"), ("auto", "Automático")], on_change=self.apply_theme)
@@ -3738,6 +3759,17 @@ class App:
             self.on_resume(now)            # el reloj de pared avanzó y el monótono no: hubo reposo
         self.wall_ref = (wall, now)
         for e in pygame.event.get():
+            self.meter.event(pygame.event.event_name(e.type))
+            if e.type == pygame.MOUSEMOTION and self.mode == FRAME and not self.settings_open:
+                # En la presentación, temblores del trackpad (que van y vienen) no
+                # cuentan como "alguien la movió": solo un desplazamiento real.
+                if now - self.jitter_at > 1.0:
+                    self.jitter = [0, 0]
+                self.jitter_at = now
+                self.jitter[0] += e.rel[0]
+                self.jitter[1] += e.rel[1]
+                if abs(self.jitter[0]) + abs(self.jitter[1]) <= self.JITTER_PX:
+                    continue
             self.handle(e, now)
         self.poll_events(now)
         if self.items:
@@ -3774,41 +3806,73 @@ class App:
         self.woke = True
         print("Vitrina: despertó del reposo", flush=True)
 
-    def calm(self, now):
-        """¿La presentación está quieta? (sin fundido, sin controles, sin avisos,
-        sin videos y sin que nadie la toque): entonces no hace falta dibujar 60
-        veces por segundo."""
-        return (self.mode == FRAME and bool(self.items) and self.m >= 0.999 and self.night <= 0.0
-                and not self.fade and not self.cam_tween and not self.lvl_tween and not self.glide
-                and not self.players and not self.settings_open and self.settings_amt <= 0.001
-                and not self.toast and not self.hud and not self.intro and not self.shutting
-                and not self.inst and not self.power_dlg and not self.help_open and not self.keys_down
-                and not self.search_open and not self.usb_dialog()
-                and now - self.last_input > 3.0 and now - self.mouse_at > 3.0)
+    def busy_reason(self, now):
+        """Por qué la presentación no está quieta (None = quieta: no hace falta
+        dibujar 60 veces por segundo). El diagnóstico muestra estos motivos."""
+        if self.mode != FRAME:
+            return "cuadrícula o visor"
+        checks = (
+            (not self.items, "sin fotos"),
+            (self.m < 0.999 or self.cam_tween or self.lvl_tween or self.glide, "animación"),
+            (self.night > 0.0 and not self.night_slow, "modo noche cambiando"),
+            (self.fade, "cambio de foto"),
+            (self.players, "video"),
+            (self.settings_open or self.settings_amt > 0.001, "ajustes abiertos"),
+            (self.toast or self.hud, "aviso en pantalla"),
+            (self.intro or self.shutting or self.inst or self.power_dlg or self.help_open
+             or self.search_open or self.usb_dialog(), "ventana abierta"),
+            (self.keys_down, "tecla presionada"),
+            (now - self.last_input <= 3.0, "teclado o clic reciente"),
+            (now - self.mouse_at <= 3.0, "mouse reciente"),
+        )
+        for cond, why in checks:
+            if cond:
+                return why
+        return None
 
     def frame_rate(self, now):
-        """Cuadros por segundo que hacen falta ahora (menos = menos calor)."""
+        """(cuadros por segundo que hacen falta ahora, motivo si es rápido)."""
         if self.sleeping:
-            return 2                    # apagada: casi sin gastar
+            return 2, None              # apagada: casi sin gastar
         if self.night >= 0.999:
             if self.settings.night_style == "window" and self.items:
-                return 20 if self.fade else 10      # la presentación tenue dentro de los números
-            return 1                    # el reloj solo cambia cada minuto
-        if not self.calm(now):
-            return 60                   # fundidos, cuadrícula, visor, videos: todo fluido
+                return (20, "cambio de foto") if self.fade else (10, None)
+            return 1, None              # el reloj solo cambia cada minuto
+        why = self.busy_reason(now)
+        if why:
+            return 60, why              # fundidos, cuadrícula, visor, videos: todo fluido
         if self.kb_active(self.morph_i):
-            return 30                   # Ken Burns: movimiento lento, 30 alcanza
-        return 2                        # foto quieta
+            return 30, None             # Ken Burns: movimiento lento, 30 alcanza
+        return 2, None                  # foto quieta
+
+    # Lo único que despierta a la Vitrina mientras descansa. Lo demás (sensores,
+    # dispositivos, la ventana) espera al siguiente cuadro.
+    WAKE_EVENTS = (pygame.KEYDOWN, pygame.KEYUP, pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP,
+                   pygame.MOUSEWHEEL, pygame.FINGERDOWN, pygame.FINGERUP, pygame.TEXTINPUT, pygame.QUIT)
+    JITTER_PX = 3                   # movimientos más chicos que esto son ruido del trackpad
 
     def rest(self, seconds):
-        """Espera sin gastar, pero despierta en cuanto llega una tecla, el mouse
-        o algo del celular (para que nunca se sienta lenta)."""
+        """Espera sin gastar, pero despierta en cuanto llega una tecla, un clic,
+        un movimiento de verdad o algo del celular (para que nunca se sienta lenta)."""
         until = time.monotonic() + seconds
+        moved = [0, 0]
+        last = None
         while True:
             left = until - time.monotonic()
-            if left <= 0 or pygame.event.peek() or not self.events.empty():
-                return
+            if left <= 0 or pygame.event.peek(self.WAKE_EVENTS) or not self.events.empty():
+                break
+            for e in pygame.event.get(pygame.MOUSEMOTION):
+                last = e
+                moved[0] += e.rel[0]
+                moved[1] += e.rel[1]
+                self.meter.event("MOUSEMOTION (en reposo)")
+            if abs(moved[0]) + abs(moved[1]) > self.JITTER_PX:
+                break
             time.sleep(min(left, 0.012))
+        if last is not None and abs(moved[0]) + abs(moved[1]) > self.JITTER_PX:
+            # Un movimiento de verdad: vuelve a la cola, sumado, para que la app lo vea.
+            pygame.event.post(pygame.event.Event(pygame.MOUSEMOTION, pos=last.pos, rel=tuple(moved),
+                                                 buttons=last.buttons, touch=getattr(last, "touch", False)))
 
     def run(self):
         clock = pygame.time.Clock()
@@ -3818,8 +3882,8 @@ class App:
             self.frame_at = time.monotonic()
             self.step()
             now = time.monotonic()
-            self.meter.tick(now)
-            fps = self.frame_rate(now)
+            fps, why = self.frame_rate(now)
+            self.meter.tick(now, fps, why)
             if fps >= 60:
                 clock.tick(60)
             elif fps >= 20:

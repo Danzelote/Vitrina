@@ -29,22 +29,72 @@ def _cpu_busy():
     return sum(v) - idle, sum(v)
 
 
+def _procs():
+    """{pid: (nombre, ticks de procesador usados)} de todos los procesos."""
+    out = {}
+    for d in os.listdir("/proc"):
+        if not d.isdigit():
+            continue
+        st = _read(f"/proc/{d}/stat")
+        if not st or ")" not in st:
+            continue
+        name = st[st.index("(") + 1:st.rindex(")")]
+        f = st[st.rindex(")") + 2:].split()
+        try:
+            out[int(d)] = (name, int(f[11]) + int(f[12]))
+        except (IndexError, ValueError):
+            pass
+    return out
+
+
+def _irq_ticks():
+    line = (_read("/proc/stat") or "").splitlines()
+    if not line or not line[0].startswith("cpu "):
+        return 0
+    v = [int(x) for x in line[0].split()[1:]]
+    return v[5] + v[6] if len(v) > 6 else 0
+
+
 class Meter:
-    """Se llama en cada cuadro; cada pocos segundos guarda el promedio."""
+    """Se llama en cada cuadro; cada pocos segundos guarda el promedio.
+
+    Además de cuánto gasta, anota a qué ritmo dibujó y por qué (para encontrar
+    lo que no la deja descansar) y qué eventos le llegaron."""
 
     EVERY = 5.0
+    HOUR = 720                  # ventanas de 5 s en una hora
 
     def __init__(self):
         self.at = time.monotonic()
         self.times = os.times()
         self.cpu = _cpu_busy()
+        self.procs = _procs()
+        self.irq = _irq_ticks()
+        self.hz = os.sysconf("SC_CLK_TCK") if hasattr(os, "sysconf") else 100
         self.frames = 0
         self.app_pct = None      # % de un núcleo que usa la app (sin los videos)
         self.mac_pct = None      # % de todo el procesador (con todo lo demás)
         self.fps = None          # cuadros por segundo que se dibujaron
+        self.top = []            # [(programa, % de un núcleo)] los que más gastan
+        self.rates = {}          # ritmo -> segundos, en esta ventana
+        self.reasons = {}        # por qué fue rápido -> segundos, en esta ventana
+        self.events = {}         # tipo de evento -> cuántos, en esta ventana
+        self.last = {}           # lo de la ventana anterior (para el diagnóstico)
+        self.history = []        # [(ritmos, motivos)] de la última hora
+        self.prev = self.at
 
-    def tick(self, now):
+    def event(self, name):
+        self.events[name] = self.events.get(name, 0) + 1
+
+    def tick(self, now, rate=None, reason=None):
         self.frames += 1
+        span = max(0.0, now - self.prev)
+        self.prev = now
+        if rate is not None:
+            key = str(rate)
+            self.rates[key] = self.rates.get(key, 0.0) + span
+            if reason:
+                self.reasons[reason] = self.reasons.get(reason, 0.0) + span
         dt = now - self.at
         if dt < self.EVERY:
             return
@@ -53,8 +103,36 @@ class Meter:
         cpu = _cpu_busy()
         if cpu and self.cpu and cpu[1] > self.cpu[1]:
             self.mac_pct = round(100 * (cpu[0] - self.cpu[0]) / (cpu[1] - self.cpu[1]), 1)
+        procs = _procs()
+        use = {}
+        for pid, (name, ticks) in procs.items():
+            before = self.procs.get(pid)
+            if before and before[0] == name and ticks > before[1]:
+                use[name] = use.get(name, 0) + ticks - before[1]
+        irq = _irq_ticks()
+        if irq > self.irq:
+            use["(interrupciones)"] = irq - self.irq
+        self.top = sorted(((n, round(100 * v / self.hz / dt, 1)) for n, v in use.items()),
+                          key=lambda x: -x[1])[:6]
         self.fps = round(self.frames / dt, 1)
-        self.at, self.times, self.cpu, self.frames = now, t, cpu, 0
+        self.last = {"ritmos": self.rates, "motivos": self.reasons, "eventos": self.events}
+        self.history = (self.history + [(self.rates, self.reasons)])[-self.HOUR:]
+        self.at, self.times, self.cpu, self.procs, self.irq, self.frames = now, t, cpu, procs, irq, 0
+        self.rates, self.reasons, self.events = {}, {}, {}
+
+    def hour(self):
+        """Reparto de la última hora: {"ritmos": {"2": 81.0, …}, "motivos": {…}} en %."""
+        rates, reasons = {}, {}
+        for r, why in self.history:
+            for k, v in r.items():
+                rates[k] = rates.get(k, 0) + v
+            for k, v in why.items():
+                reasons[k] = reasons.get(k, 0) + v
+        total = sum(rates.values()) or 1
+
+        def pct(d):
+            return {k: round(100 * v / total, 1) for k, v in sorted(d.items(), key=lambda kv: -kv[1])}
+        return {"minutos": round(total / 60, 1), "ritmos": pct(rates), "motivos": pct(reasons)}
 
 
 def sensors():

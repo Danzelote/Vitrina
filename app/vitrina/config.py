@@ -59,7 +59,8 @@ SCREEN_CACHE = 6
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif",
               # RAW de cámara: se usa la vista previa que traen dentro (ver raw.py)
               ".cr2", ".cr3", ".nef", ".nrw", ".arw", ".srf", ".sr2", ".dng", ".raf", ".orf", ".rw2", ".pef", ".srw"}
-VIDEO_EXTS = {".mp4", ".mov", ".m4v", ".avi", ".mkv", ".3gp"}
+VIDEO_EXTS = {".mp4", ".mov", ".m4v", ".avi", ".mkv", ".3gp",
+              ".gif"}   # los GIF animados se preparan como video (pesan mucho menos y se repiten igual)
 
 # Video: versión ligera para reproducir y clip de vista previa
 

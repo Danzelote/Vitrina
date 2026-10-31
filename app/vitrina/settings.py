@@ -29,6 +29,7 @@ class Settings:
     memories: bool = True        # "Un día como hoy"
     locked: bool = False         # teclado bloqueado (Control + L 3 s); se queda así al reiniciar
     media: str = "all"           # en la presentación: "all" | "photos" | "videos"
+    short_loops: int = 4         # veces que se repite un video de menos de 5 s en la presentación
     clock: str = "off"           # "off" | "12" | "24"
     night: str = "never"         # "never" | "schedule"
     night_hours: str = "23-7"    # ver night.SCHEDULES

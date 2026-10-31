@@ -51,6 +51,7 @@ SETTINGS = {
     "clock": ("off", "12", "24"),
     "shuffle": (True, False),
     "idle_seconds": (10, 15, 30, 60),
+    "short_loops": (1, 2, 4, 5),
     "language": ("es", "en"),
     "theme": ("light", "dark", "auto"),
     "night": ("never", "schedule"),
@@ -283,6 +284,8 @@ class Handler(BaseHTTPRequestHandler):
                      camara_qr=QRSCAN.LAST_LOG,
                      dibuja=self.v.app.gpu, cuadros_por_segundo=self.v.app.meter.fps,
                      cpu_app_pct=self.v.app.meter.app_pct, cpu_mac_pct=self.v.app.meter.mac_pct,
+                     programas_pct_de_un_nucleo=self.v.app.meter.top,
+                     ultimos_5s=self.v.app.meter.last, ultima_hora=self.v.app.meter.hour(),
                      **__import__("vitrina.power", fromlist=["sensors"]).sensors(),
                      trabada=__import__("vitrina.watchdog", fromlist=["REPORTS"]).REPORTS)
             return self.send(200, json.dumps(d, ensure_ascii=False, indent=2), "application/json; charset=utf-8")

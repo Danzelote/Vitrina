@@ -281,3 +281,9 @@ h1 { font-size: 32px; font-weight: 600; letter-spacing: -0.02em; margin: 18px 4p
   padding: calc(env(safe-area-inset-top) + 2px) 16px 6px;
   background: var(--bar); -webkit-backdrop-filter: saturate(180%) blur(20px); backdrop-filter: saturate(180%) blur(20px); }
 .sticky h1 { margin-top: 10px; }
+
+/* Diagnóstico: los datos técnicos, legibles y que no se salgan de la pantalla */
+pre.diag { font: 11px/1.45 ui-monospace, Menlo, monospace; color: var(--text2); background: var(--card);
+  border-radius: 12px; padding: 12px 14px; margin: 0 0 24px; white-space: pre-wrap; word-break: break-all;
+  -webkit-user-select: text; user-select: text; }
+.row.stack .note + .note { margin-top: 6px; }

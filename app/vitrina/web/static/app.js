@@ -47,7 +47,15 @@ const EN = {
   "Contenido": "Content", "Versión": "Version",
   "Desconectar este celular": "Disconnect this phone", "¿Desconectar este celular?": "Disconnect this phone?",
   "Para volver a usarlo tendrás que escanear el código otra vez.": "To use it again you'll need to scan the code again.",
-  "Desconectar": "Disconnect", "Cerrar": "Close", "Diagnóstico": "Diagnostics", "Sin conexión con la Vitrina": "Can't reach the Vitrina",
+  "Desconectar": "Disconnect", "Cerrar": "Close", "Diagnóstico": "Diagnostics",
+  "Procesador": "CPU", "Tarjeta de video": "Graphics", "Ventilador": "Fan", "Uso del procesador": "CPU use",
+  "la app {a} · toda la Mac {b}": "app {a} · whole Mac {b}", "Ritmo de dibujo": "Drawing rate",
+  "{n} cuadros por segundo": "{n} frames per second", "Por qué va rápido": "Why it's fast",
+  "Última hora": "Last hour", "Programas que más gastan": "Busiest programs",
+  "Dibuja con": "Drawn by", "Datos técnicos": "Technical details", "Copiar": "Copy", "Copiado": "Copied",
+  "Actualizar datos": "Refresh", "Cargando…": "Loading…",
+  "Repetir videos cortos": "Repeat short videos", "1 vez": "Once",
+  "Los videos de menos de 5 segundos (y los GIF) se repiten así en la presentación. En pantalla grande se repiten sin parar.": "Videos under 5 seconds (and GIFs) repeat this many times in the slideshow. Full screen, they loop forever.", "Sin conexión con la Vitrina": "Can't reach the Vitrina",
   "Guardado": "Saved", "Movidas": "Moved", "Borradas": "Deleted", "Ya existe una colección con ese nombre": "A collection with that name already exists",
 };
 let LANG = "es";
@@ -463,6 +471,7 @@ const OPTS = {
   media: [["all", "Fotos y videos"], ["photos", "Solo fotos"], ["videos", "Solo videos"]],
   clock: [["off", "Oculto"], ["12", "12 h"], ["24", "24 h"]],
   idle_seconds: [[10, "10 s"], [15, "15 s"], [30, "30 s"], [60, "1 min"]],
+  short_loops: [[1, "1 vez"], [2, "2"], [4, "4"], [5, "5"]],
   language: [["es", "Español"], ["en", "English"]],
   theme: [["light", "Claro"], ["dark", "Oscuro"], ["auto", "Automático"]],
   night: [["never", "Nunca"], ["schedule", "Por horario"]],
@@ -502,7 +511,9 @@ function settingsPageHTML(page) {
       ${segRow("clock", "Reloj")}
       ${switchRow("shuffle", "Orden aleatorio")}
       ${segRow("idle_seconds", "Volver a la presentación")}
-    </div>`;
+      ${segRow("short_loops", "Repetir videos cortos")}
+    </div>
+    <p class="foot">${t("Los videos de menos de 5 segundos (y los GIF) se repiten así en la presentación. En pantalla grande se repiten sin parar.")}</p>`;
   if (page === "general") return `<div class="card">
       ${segRow("language", "Idioma")}
       ${switchRow("locked", "Teclado bloqueado")}
@@ -516,7 +527,7 @@ function settingsPageHTML(page) {
         <div class="disk"><i style="width:${(100 * (1 - i.disk.free / i.disk.total)).toFixed(1)}%"></i></div></div>` : ""}
       <div class="row"><span class="grow title">${t("Contenido")}</span><span class="value">${count(i.photos, "1 foto", "{n} fotos")} · ${count(i.videos, "1 video", "{n} videos")}</span></div>
       <div class="row"><span class="grow title">${t("Versión")}</span><span class="value">${esc(i.version)}</span></div>
-      <a class="row nav" href="/api/diag" target="_blank"><span class="grow title">${t("Diagnóstico")}</span><span class="chevron">›</span></a>
+      <button class="row nav" id="diag"><span class="grow title">${t("Diagnóstico")}</span><span class="chevron">›</span></button>
     </div>`;
   if (page === "screen") return `<div class="card">
       ${segRow("theme", "Apariencia")}
@@ -561,6 +572,14 @@ function updateBadge() {
 function renderSettings(dir) {
   const i = S.info, page = S.setPage;
   const anim = dir === "in" ? "push-in" : dir === "out" ? "push-out" : "";
+  if (page === "diag") {
+    $view.innerHTML = `<div class="${anim}">
+      <button class="back" id="back">‹ ${t("General")}</button>
+      <h1>${t("Diagnóstico")}</h1><div id="diagbox"><p class="sub">${t("Cargando…")}</p></div></div>`;
+    $view.querySelector("#back").onclick = () => { S.setPage = "general"; renderSettings("out"); window.scrollTo(0, 0); };
+    loadDiag();
+    return;
+  }
   if (page) {
     $view.innerHTML = `<div class="${anim}">
       <button class="back" id="back">‹ ${t("Ajustes")}</button>
@@ -581,6 +600,8 @@ function renderSettings(dir) {
       b.onclick = () => { S.setPage = b.dataset.page; renderSettings("in"); window.scrollTo(0, 0); };
     });
   }
+  const dg = $view.querySelector("#diag");
+  if (dg) dg.onclick = () => { S.setPage = "diag"; renderSettings("in"); window.scrollTo(0, 0); };
   const upd = $view.querySelector("#upd"), updc = $view.querySelector("#upd-check");
   if (upd) upd.onclick = () => updateAction("apply");
   if (updc) updc.onclick = () => updateAction("check");
@@ -608,6 +629,56 @@ function renderSettings(dir) {
     if (!ok) return;
     await fetch("/api/unpair", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
     showWelcome(false);
+  };
+}
+
+// Diagnóstico: lo importante en palabras arriba; los datos completos abajo (y para copiar).
+async function loadDiag() {
+  const box = document.getElementById("diagbox");
+  let d, raw;
+  try {
+    const r = await fetch("/api/diag", { cache: "no-store" });
+    raw = await r.text(); d = JSON.parse(raw);
+  } catch { if (box) box.innerHTML = `<p class="sub">${t("Sin conexión con la Vitrina")}</p>`; return; }
+  if (!box || S.setPage !== "diag") return;
+  const temps = d.temperaturas_c || {};
+  const pick = (re) => Object.entries(temps).filter(([k]) => re.test(k)).map(([, v]) => v);
+  const cpuT = pick(/coretemp|TC0/i), gpuT = pick(/nouveau|TG0/i);
+  const deg = (a) => (a.length ? Math.max(...a).toFixed(0) + " °C" : "—");
+  const fan = Object.values(d.ventiladores || {})[0];
+  const pct = (v) => (v == null ? "—" : v.toFixed(0) + " %");
+  const row = (title, value) => `<div class="row"><span class="grow title">${title}</span><span class="value">${value}</span></div>`;
+  const list = (obj) => Object.entries(obj || {}).map(([k, v]) => `${esc(k)} ${v} %`).join(" · ") || "—";
+  const why = d.ultimos_5s && d.ultimos_5s.motivos ? Object.keys(d.ultimos_5s.motivos).join(", ") : "";
+  const hour = d.ultima_hora || {};
+  box.innerHTML = `<div class="card">
+      ${row(t("Procesador"), deg(cpuT))}
+      ${row(t("Tarjeta de video"), deg(gpuT))}
+      ${fan ? row(t("Ventilador"), `${esc(fan.rpm)} rpm`) : ""}
+      ${row(t("Uso del procesador"), t("la app {a} · toda la Mac {b}", { a: pct(d.cpu_app_pct), b: pct(d.cpu_mac_pct) }))}
+      ${row(t("Ritmo de dibujo"), d.cuadros_por_segundo == null ? "—" : t("{n} cuadros por segundo", { n: d.cuadros_por_segundo }))}
+      ${why ? row(t("Por qué va rápido"), esc(why)) : ""}
+      ${row(t("Dibuja con"), esc((d.dibuja || []).filter(Boolean).join(" · ") || "—"))}
+    </div>
+    <div class="section">${t("Última hora")}${hour.minutos ? ` · ${hour.minutos} min` : ""}</div>
+    <div class="card"><div class="row stack"><span class="note">${t("Ritmo de dibujo")}: ${list(hour.ritmos)}</span>
+      <span class="note">${t("Por qué va rápido")}: ${list(hour.motivos)}</span></div></div>
+    <div class="section">${t("Programas que más gastan")}</div>
+    <div class="card">${(d.programas_pct_de_un_nucleo || []).map(([n, v]) => row(esc(n), v + " %")).join("") || row("—", "")}</div>
+    <div class="card" style="margin-top:16px">
+      <button class="row" id="diag-copy"><span class="grow title link">${t("Copiar")}</span></button>
+      <button class="row" id="diag-again"><span class="grow title link">${t("Actualizar datos")}</span></button>
+    </div>
+    <div class="section">${t("Datos técnicos")}</div>
+    <pre class="diag">${esc(raw)}</pre>`;
+  box.querySelector("#diag-again").onclick = () => { box.innerHTML = `<p class="sub">${t("Cargando…")}</p>`; loadDiag(); };
+  box.querySelector("#diag-copy").onclick = async () => {
+    try { await navigator.clipboard.writeText(raw); toast(t("Copiado")); }
+    catch {   // sin permiso del portapapeles (http): se selecciona para copiar a mano
+      const sel = window.getSelection(), r = document.createRange();
+      r.selectNodeContents(box.querySelector("pre.diag")); sel.removeAllRanges(); sel.addRange(r);
+      try { document.execCommand("copy"); toast(t("Copiado")); } catch {}
+    }
   };
 }
 
