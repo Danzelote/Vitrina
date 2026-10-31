@@ -199,6 +199,20 @@ def light_sensor():
     return cam if cam.available else s
 
 
+def _xorg_notes():
+    """Lo que dice el registro del servidor gráfico sobre el controlador y el
+    intercambio de pantallas (para confirmar que PageFlip quedó apagado)."""
+    for path in (os.path.expanduser("~/.local/share/xorg/Xorg.0.log"), "/var/log/Xorg.0.log"):
+        try:
+            with open(path, errors="replace") as f:
+                lines = f.read().splitlines()
+        except OSError:
+            continue
+        keys = ("flip", "Flip", "modeset(0)", "glamor", "vitrina-graficos")
+        return [l.strip()[:160] for l in lines if any(k in l for k in keys)][:12]
+    return None
+
+
 def diagnostics():
     """Lo que la Vitrina encuentra en esta Mac (para revisar sensores y cámara)."""
     import platform
@@ -232,6 +246,7 @@ def diagnostics():
         "instalada": read("/etc/vitrina-instalada"),
         "desde_usb": os.path.isdir("/run/live/medium/live"),
         "instalacion": (read("/run/vitrina-install.log") or "")[-3000:] or None,
+        "xorg": _xorg_notes(),
     }
 
 
