@@ -287,7 +287,109 @@ boot_black() {
     if printf '\x07\x00\x00\x00\x00\x00\x00' >"$var" 2>/dev/null; then echo "OK"; else echo "ERROR"; fi
 }
 
+# Diagnóstico: ¿qué tiene ocupado al núcleo? (solo lee; un segundo de muestra)
+kwork() {
+    python3 - <<'PY'
+import collections, json, os, re, time
+
+def read(p):
+    try:
+        with open(p) as f:
+            return f.read()
+    except OSError:
+        return ""
+
+def threads():
+    out = {}
+    for d in os.listdir("/proc"):
+        if d.isdigit():
+            st = read(f"/proc/{d}/stat")
+            if ")" in st:
+                name = st[st.index("(") + 1:st.rindex(")")]
+                f = st[st.rindex(")") + 2:].split()
+                out[int(d)] = (name, int(f[11]) + int(f[12]))
+    return out
+
+def irqs():
+    out = {}
+    for line in read("/proc/interrupts").splitlines()[1:]:
+        parts = line.split()
+        if not parts:
+            continue
+        nums = [int(x) for x in parts[1:] if x.isdigit()]
+        out[parts[0].rstrip(":")] = (sum(nums), " ".join(p for p in parts[1 + len(nums):]))
+    return out
+
+def gpes():
+    out = {}
+    for f in os.listdir("/sys/firmware/acpi/interrupts") if os.path.isdir("/sys/firmware/acpi/interrupts") else []:
+        v = read("/sys/firmware/acpi/interrupts/" + f).split()
+        if v and v[0].isdigit():
+            out[f] = int(v[0])
+    return out
+
+report = {}
+t0, i0, g0 = threads(), irqs(), gpes()
+# Qué funciones ejecutan los trabajadores del núcleo (rastreo propio, sin tocar el general).
+base = "/sys/kernel/tracing"
+if not os.path.isdir(base + "/events"):
+    os.system("mount -t tracefs nodev /sys/kernel/tracing 2>/dev/null")
+inst = base + "/instances/vitrina-diag"
+funcs, queues = collections.Counter(), collections.Counter()
+try:
+    if os.path.isdir(inst):
+        os.rmdir(inst)
+    os.mkdir(inst)
+    ev = inst + "/events/workqueue/workqueue_execute_start/enable"
+    qev = inst + "/events/workqueue/workqueue_queue_work/enable"
+    open(ev, "w").write("1")
+    open(qev, "w").write("1")
+    time.sleep(1.0)
+    open(ev, "w").write("0")
+    open(qev, "w").write("0")
+    for line in read(inst + "/trace").splitlines():
+        m = re.search(r"function[ =](\S+)", line)
+        if m and "workqueue_execute_start" in line:
+            funcs[m.group(1)] += 1
+        q = re.search(r"workqueue=(\S+)", line)
+        if q and "workqueue_queue_work" in line:
+            queues[q.group(1)] += 1
+    report["tareas_por_segundo"] = funcs.most_common(10)
+    report["colas"] = queues.most_common(5)
+except Exception as exc:
+    report["rastreo_error"] = str(exc)
+finally:
+    try:
+        os.rmdir(inst)
+    except OSError:
+        pass
+t1, i1, g1 = threads(), irqs(), gpes()
+busy = sorted(((t1[p][0], p, t1[p][1] - t0[p][1]) for p in t1 if p in t0 and t1[p][0] == t0[p][0]),
+              key=lambda x: -x[2])
+hz = os.sysconf("SC_CLK_TCK")
+report["hilos"] = [(n, p, round(100 * v / hz / 1.2, 1)) for n, p, v in busy[:5]]
+# Dónde está el trabajador más ocupado (pila del núcleo, varias muestras).
+top = next((p for n, p, v in busy if n.startswith("kworker")), None)
+if top:
+    frames = collections.Counter()
+    for _ in range(20):
+        for line in read(f"/proc/{top}/stack").splitlines()[:6]:
+            fn = line.split("]", 1)[-1].strip().split("+")[0]
+            if fn and fn not in ("worker_thread", "kthread", "ret_from_fork", "ret_from_fork_asm", "process_one_work"):
+                frames[fn] += 1
+        time.sleep(0.03)
+    report["pila"] = frames.most_common(8)
+report["interrupciones_por_segundo"] = sorted(
+    ((k, round((i1[k][0] - i0[k][0]) / 1.2), i1[k][1]) for k in i1 if k in i0 and i1[k][0] > i0[k][0]),
+    key=lambda x: -x[1])[:6]
+report["acpi_gpe_por_segundo"] = sorted(((k, round((g1[k] - g0[k]) / 1.2)) for k in g1 if k in g0 and g1[k] > g0[k]),
+                                        key=lambda x: -x[1])[:5]
+print("KWORK " + json.dumps(report))
+PY
+}
+
 case "${1:-}" in
+    kwork) kwork ;;
     detect) detect ;;
     boot-black) boot_black ;;
     usb-list) usb_list ;;

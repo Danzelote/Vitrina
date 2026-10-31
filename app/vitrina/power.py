@@ -209,3 +209,21 @@ def renderer_info(win):
         return name, gl
     except Exception as exc:       # noqa: BLE001
         return None, str(exc)
+
+
+def kernel_report():
+    """Qué tiene ocupado al núcleo (tareas, interrupciones). Lo mide install.sh
+    como root durante ~1.5 s; solo en la Vitrina instalada o en la USB."""
+    import json
+    import shutil
+    import subprocess
+    script = "/opt/vitrina/install.sh"
+    if not (os.path.exists(script) and shutil.which("sudo")):
+        return None
+    try:
+        out = subprocess.run(["sudo", "-n", script, "kwork"], capture_output=True, text=True,
+                             timeout=15, stdin=subprocess.DEVNULL).stdout
+        line = next((x for x in out.splitlines() if x.startswith("KWORK ")), None)
+        return json.loads(line[6:]) if line else {"error": out[-300:]}
+    except Exception as exc:       # noqa: BLE001
+        return {"error": str(exc)}

@@ -286,6 +286,7 @@ class Handler(BaseHTTPRequestHandler):
                      cpu_app_pct=self.v.app.meter.app_pct, cpu_mac_pct=self.v.app.meter.mac_pct,
                      programas_pct_de_un_nucleo=self.v.app.meter.top,
                      ultimos_5s=self.v.app.meter.last, ultima_hora=self.v.app.meter.hour(),
+                     nucleo=__import__("vitrina.power", fromlist=["kernel_report"]).kernel_report(),
                      **__import__("vitrina.power", fromlist=["sensors"]).sensors(),
                      trabada=__import__("vitrina.watchdog", fromlist=["REPORTS"]).REPORTS)
             return self.send(200, json.dumps(d, ensure_ascii=False, indent=2), "application/json; charset=utf-8")

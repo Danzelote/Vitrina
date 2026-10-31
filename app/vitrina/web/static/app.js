@@ -54,7 +54,7 @@ const EN = {
   "Última hora": "Last hour", "Programas que más gastan": "Busiest programs",
   "Dibuja con": "Drawn by", "Datos técnicos": "Technical details", "Copiar": "Copy", "Copiado": "Copied",
   "Actualizar datos": "Refresh", "Cargando…": "Loading…",
-  "Repetir videos cortos": "Repeat short videos", "1 vez": "Once",
+  "Repetir videos cortos": "Repeat short videos", "Núcleo del sistema": "System kernel", "1 vez": "Once",
   "Los videos de menos de 5 segundos (y los GIF) se repiten así en la presentación. En pantalla grande se repiten sin parar.": "Videos under 5 seconds (and GIFs) repeat this many times in the slideshow. Full screen, they loop forever.", "Sin conexión con la Vitrina": "Can't reach the Vitrina",
   "Guardado": "Saved", "Movidas": "Moved", "Borradas": "Deleted", "Ya existe una colección con ese nombre": "A collection with that name already exists",
 };
@@ -665,6 +665,9 @@ async function loadDiag() {
       <span class="note">${t("Por qué va rápido")}: ${list(hour.motivos)}</span></div></div>
     <div class="section">${t("Programas que más gastan")}</div>
     <div class="card">${(d.programas_pct_de_un_nucleo || []).map(([n, v]) => row(esc(n), v + " %")).join("") || row("—", "")}</div>
+    ${d.nucleo && d.nucleo.hilos ? `<div class="section">${t("Núcleo del sistema")}</div>
+    <div class="card"><div class="row stack">${(d.nucleo.tareas_por_segundo || []).slice(0, 4).map(([f, n]) =>
+      `<span class="note">${esc(f)} · ${n}/s</span>`).join("") || `<span class="note">—</span>`}</div></div>` : ""}
     <div class="card" style="margin-top:16px">
       <button class="row" id="diag-copy"><span class="grow title link">${t("Copiar")}</span></button>
       <button class="row" id="diag-again"><span class="grow title link">${t("Actualizar datos")}</span></button>

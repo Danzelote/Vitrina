@@ -576,6 +576,9 @@ class App:
             self.m = 0.0
         self.mode = FRAME
         self.settings_open = False
+        self.help_open = False          # en la presentación no se ven: que no la tengan despierta
+        if self.search_open:
+            self.close_search()
         self.hero = self.morph_i = i
         self.big_kind = FRAME
         self.kb_start(i, now)
@@ -3819,8 +3822,13 @@ class App:
             (self.players, "video"),
             (self.settings_open or self.settings_amt > 0.001, "ajustes abiertos"),
             (self.toast or self.hud, "aviso en pantalla"),
-            (self.intro or self.shutting or self.inst or self.power_dlg or self.help_open
-             or self.search_open or self.usb_dialog(), "ventana abierta"),
+            (self.intro, "logo de arranque"),
+            (self.shutting, "apagando"),
+            (self.inst, "instalador"),
+            (self.power_dlg, "ventana de apagar"),
+            (self.help_open, "lista de atajos"),
+            (self.search_open, "búsqueda"),
+            (self.usb_dialog(), "memoria USB"),
             (self.keys_down, "tecla presionada"),
             (now - self.last_input <= 3.0, "teclado o clic reciente"),
             (now - self.mouse_at <= 3.0, "mouse reciente"),
