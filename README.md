@@ -13,7 +13,10 @@ Vitrina se instala en una Mac Intel vieja (2006–2015) y la convierte en un por
 
 - **Presentación a pantalla completa** de fotos y videos, con transiciones suaves, efecto Ken Burns, reloj, fecha y lugar, y "un día como hoy".
 - **Al mover el mouse**, la foto se encoge hasta su lugar en una cuadrícula que puedes explorar y acercar con dos dedos. Al alejarte se vuelve un mosaico con toda tu biblioteca de un vistazo, y más lejos las fotos se agrupan por meses y por años.
-- **Colecciones y búsqueda**: elige una colección o escribe *videos*, *2019*, *diciembre* o un lugar, y la cuadrícula se reacomoda solo con esas.
+- **Colecciones y búsqueda**: elige una colección o escribe *videos*, *2019*, *diciembre* o un lugar, y la cuadrícula se reacomoda solo con esas. Una foto puede estar en varias colecciones.
+- **Colecciones automáticas**: viajes, eventos, selfies y panorámicas se agrupan solos, con los datos de cada foto.
+- **Organiza desde la Mac**: el menú ··· de cada foto, el modo Seleccionar y "Eliminadas recientemente" (30 días para recuperar lo borrado).
+- **El Ken Burns respeta las caras**: encuentra dónde hay caras (sin reconocer de quién son) y nunca las corta.
 - **Las fotos llegan desde tu celular**: escaneas un código QR en la pantalla y subes fotos por tu WiFi. Sin cuentas, sin nube y sin app que instalar. Desde el celular también puedes borrar, ordenar en colecciones y cambiar ajustes.
 - **También desde una memoria USB**: al conectarla, ofrece importar sus fotos.
 - **Funciona sin internet**: las fotos viven en la propia Mac. Las duplicadas se detectan solas.

@@ -20,6 +20,7 @@ En la Vitrina, la tecla **H** muestra esta lista en pantalla.
 | **L** | Brillo automático (*light*) sí/no |
 | **N** | Vista previa del modo noche (cualquier tecla o toque para salir) |
 | **E** | Español o inglés |
+| **Suprimir** (⌫) | En pantalla grande: borrar la foto (se puede recuperar 30 días en Colecciones → Eliminadas recientemente). Seleccionando: borrar las elegidas |
 | **/** · **Control + F** | Buscar: *videos*, *fotos*, un año (*2019*), un mes (*diciembre*), un lugar o una colección. Esc borra la búsqueda |
 | **,** | Abre o cierra Ajustes (como ⌘, en la Mac) |
 | **H** · **?** | Esta lista |

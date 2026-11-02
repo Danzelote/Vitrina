@@ -107,6 +107,7 @@ class Player:
         # Órdenes que la interfaz deja y el hilo del video aplica (nunca bloquean).
         self.desired_pause = start_paused
         self._seek_to = None
+        self._kick = False
         self._thread = threading.Thread(target=self._run, daemon=True)
         _THREADS[:] = [t for t in _THREADS if t.is_alive()]
         _THREADS.append(self._thread)
@@ -178,6 +179,11 @@ class Player:
                             except Exception:
                                 pass
                             applied_volume = vol
+                if self._kick:
+                    # Al terminar, mpv se pausa solo (keep-open): hay que quitarle la
+                    # pausa aunque para nosotros ya estuviera "reproduciendo".
+                    self._kick = False
+                    applied_pause = None
                 if self.desired_pause != applied_pause:
                     self.mpv.pause = self.desired_pause
                     applied_pause = self.desired_pause
@@ -295,6 +301,7 @@ class Player:
         self.seek(0)
         self.ended = False
         self.play()
+        self._kick = True
 
     def fade_out_and_close(self):
         """Baja el volumen y luego se cierra (ver update)."""

@@ -54,7 +54,8 @@ const EN = {
   "Última hora": "Last hour", "Programas que más gastan": "Busiest programs",
   "Dibuja con": "Drawn by", "Datos técnicos": "Technical details", "Copiar": "Copy", "Copiado": "Copied",
   "Actualizar datos": "Refresh", "Cargando…": "Loading…",
-  "Repetir videos cortos": "Repeat short videos", "Núcleo del sistema": "System kernel", "1 vez": "Once",
+  "Repetir videos cortos": "Repeat short videos",
+  "1 día": "1 day", "Agregadas a “{c}”": "Added to “{c}”", "Agregar a colección": "Add to collection", "Automáticas": "Automatic", "Borrar ({n})": "Delete ({n})", "Borrar colección": "Delete collection", "Buscando…": "Checking…", "Eliminadas recientemente": "Recently deleted", "Guardar como colección": "Save as collection", "Las fotos no se borran.": "The photos aren't deleted.", "No hay fotos eliminadas": "No deleted photos", "Opciones": "Options", "Recuperadas": "Recovered", "Recuperar ({n})": "Recover ({n})", "Recuperar todas": "Recover all", "Se borran para siempre 30 días después.": "They're deleted for good after 30 days.", "Se pueden recuperar durante 30 días en Colecciones → Eliminadas recientemente.": "You can recover them for 30 days in Collections → Recently deleted.", "Se quitó de “{c}”": "Removed from “{c}”", "Toca para elegir; sin elegir, aplica a todas.": "Tap to choose; with none chosen, it applies to all.", "Toca varias para que las fotos queden en todas.": "Tap several to put the photos in all of them.", "Todavía no tienes colecciones. Crea una con “+ Nueva”.": "No collections yet. Create one with “+ New”.", "Vaciar": "Empty", "Ya no se podrán recuperar.": "They can't be recovered.", "{n} días": "{n} days", "¿Borrar la colección “{c}”?": "Delete the collection “{c}”?", "¿Borrar para siempre?": "Delete forever?", "Núcleo del sistema": "System kernel", "1 vez": "Once",
   "Los videos de menos de 5 segundos (y los GIF) se repiten así en la presentación. En pantalla grande se repiten sin parar.": "Videos under 5 seconds (and GIFs) repeat this many times in the slideshow. Full screen, they loop forever.", "Sin conexión con la Vitrina": "Can't reach the Vitrina",
   "Guardado": "Saved", "Movidas": "Moved", "Borradas": "Deleted", "Ya existe una colección con ese nombre": "A collection with that name already exists",
 };
@@ -71,7 +72,12 @@ const collName = (c) => (c ? c : t("Sin colección"));
 // ---------------------------------------------------------------- estado
 const S = {
   tab: "upload", info: null, photos: [], filter: null,
-  selecting: false, selected: new Set(), uploads: [], uploadColl: localStorage.getItem("coll") || "",
+  selecting: false, selected: new Set(), uploads: [],
+  // Colecciones para lo que se sube (una foto puede ir a varias).
+  uploadColls: (() => { try { const v = JSON.parse(localStorage.getItem("colls") || "null");
+    if (Array.isArray(v)) return v; } catch {} const old = localStorage.getItem("coll"); return old ? [old] : []; })(),
+  collPage: null,           // "trash" = Eliminadas recientemente
+  trash: [], trashSel: new Set(),
 };
 const $view = document.getElementById("view");
 
@@ -131,7 +137,7 @@ async function refresh() {
 }
 
 function go(tab) {
-  if (tab !== S.tab) S.setPage = null;
+  if (tab !== S.tab) { S.setPage = null; S.collPage = null; }
   S.tab = tab; sessionStorage.setItem("tab", tab);
   if (tab !== "photos") { S.selecting = false; S.selected.clear(); }
   document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === tab));
@@ -145,17 +151,24 @@ function render() {
 }
 
 // ---------------------------------------------------------------- subir
+// Filtro de Fotos (una a la vez) o colecciones para subir (varias: `active` es una lista).
 function chipsHTML(active, withAll, withNew) {
-  const cols = S.info.collections;
+  const multi = Array.isArray(active);
+  const on = (name) => (multi ? active.includes(name) : active === name);
   let h = `<div class="chips">`;
   if (withAll) h += `<button class="chip ${active === null ? "on" : ""}" data-c="__all">${t("Todas")}</button>`;
-  for (const c of cols) {
-    if (withAll && !c.name && !c.count) continue;
-    h += `<button class="chip ${active === c.name ? "on" : ""}" data-c="${esc(c.name)}">${esc(collName(c.name))}</button>`;
+  if (multi) h += `<button class="chip ${active.length ? "" : "on"}" data-c="">${t("Sin colección")}</button>`;
+  for (const c of S.info.collections) {
+    if (withAll && !c.count) continue;
+    h += `<button class="chip ${on(c.name) ? "on" : ""}" data-c="${esc(c.name)}">${esc(c.name)}</button>`;
   }
+  if (withAll) for (const a of S.info.autos || [])
+    h += `<button class="chip auto ${on(a.key) ? "on" : ""}" data-c="${esc(a.key)}">${esc(a.title)}</button>`;
   if (withNew) h += `<button class="chip" data-c="__new">+ ${t("Nueva")}</button>`;
   return h + `</div>`;
 }
+const inFilter = (p) => S.filter === null || (S.filter.startsWith("auto:") ? (p.a || []).includes(S.filter) : (p.c || []).includes(S.filter));
+const filterTitle = (f) => (f && f.startsWith("auto:") ? ((S.info.autos || []).find((a) => a.key === f) || {}).title || "" : f || "");
 
 function renderUpload() {
   const ups = S.uploads;
@@ -168,7 +181,8 @@ function renderUpload() {
     <h1>${t("Subir")}</h1>
     <p class="sub">${t("Sube fotos y videos a la Vitrina.")}</p>
     <div class="section" style="margin-top:8px">${t("Colección")}</div>
-    ${chipsHTML(S.uploadColl, false, true)}
+    ${chipsHTML(S.uploadColls, false, true)}
+    <p class="foot" style="margin:-4px 4px 10px">${t("Toca varias para que las fotos queden en todas.")}</p>
     <label class="btn">
       <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>${t("Elegir fotos y videos")}
       <input id="pick" type="file" accept="image/*,image/heic,image/heif,video/*" multiple hidden>
@@ -200,7 +214,11 @@ function renderUpload() {
   pick.addEventListener("cancel", () => { S.picking = null; stayAwake(false); render(); });
   pick.addEventListener("change", (e) => { S.picking = null; addUploads([...e.target.files]); e.target.value = ""; });
   bindUnpick();
-  bindChips((c) => { S.uploadColl = c; localStorage.setItem("coll", c); render(); }, true);
+  bindChips((c) => {
+    if (!c) S.uploadColls = [];
+    else S.uploadColls = S.uploadColls.includes(c) ? S.uploadColls.filter((x) => x !== c) : [...S.uploadColls, c];
+    localStorage.setItem("colls", JSON.stringify(S.uploadColls)); render();
+  }, true);
 }
 
 function preparingHTML() {
@@ -258,7 +276,7 @@ async function stayAwake(on) {
 let uploadId = 0, wakeLock = null;
 function addUploads(files) {
   for (const file of files) {
-    const u = { id: ++uploadId, file, coll: S.uploadColl, state: "wait", sent: 0, preview: null };
+    const u = { id: ++uploadId, file, colls: [...S.uploadColls], state: "wait", sent: 0, preview: null };
     if (file.type.startsWith("image/")) u.preview = URL.createObjectURL(file);
     S.uploads.push(u);
   }
@@ -305,7 +323,7 @@ function send(u) {
     const x = new XMLHttpRequest();
     x.open("POST", "/api/upload");
     x.setRequestHeader("X-Name", encodeURIComponent(u.file.name));
-    x.setRequestHeader("X-Collection", encodeURIComponent(u.coll));
+    x.setRequestHeader("X-Collections", encodeURIComponent(JSON.stringify(u.colls)));
     x.setRequestHeader("X-Modified", String(u.file.lastModified || 0));
     x.upload.onprogress = (e) => { u.sent = e.loaded; redrawUploads(); };
     x.onload = () => {
@@ -329,7 +347,7 @@ async function finished() {
 
 // ---------------------------------------------------------------- fotos
 function renderPhotos() {
-  const list = S.photos.filter((p) => S.filter === null || p.c === S.filter);
+  const list = S.photos.filter(inFilter);
   const nSel = S.selected.size;
   $view.innerHTML = `
     <div class="sticky">
@@ -366,7 +384,7 @@ function updateActions() {
   if (want && !bar) {
     bar = document.createElement("div");
     bar.className = "actions";
-    bar.innerHTML = `<button class="btn soft" id="mv">${t("Mover")}</button><button class="btn del" id="rm">${t("Borrar")}</button>`;
+    bar.innerHTML = `<button class="btn soft" id="mv">${t("Colección")}</button><button class="btn del" id="rm">${t("Borrar")}</button>`;
     bar.querySelector("#mv").onclick = () => moveTo([...S.selected]);
     bar.querySelector("#rm").onclick = () => remove([...S.selected]);
     $view.appendChild(bar);
@@ -392,9 +410,9 @@ function openViewer(id) {
   const date = d.toLocaleDateString(LANG === "en" ? "en-US" : "es-MX", { day: "numeric", month: "long", year: "numeric" });
   v.innerHTML = `
     <div class="top"><button class="x" id="vx">${t("Cerrar")}</button>
-      <div class="meta">${esc(date)}<br>${esc(p.p ? (p.c ? p.p + " · " + p.c : p.p) : collName(p.c))}</div><span style="width:52px"></span></div>
+      <div class="meta">${esc(date)}<br>${esc([p.p, ...(p.c || [])].filter(Boolean).join(" · "))}</div><span style="width:52px"></span></div>
     <div class="pic"><img src="/s/${p.id}.jpg" alt=""></div>
-    <div class="bottom"><button class="btn" id="vm">${t("Mover")}</button><button class="btn del" id="vd">${t("Borrar")}</button></div>`;
+    <div class="bottom"><button class="btn" id="vm">${t("Colección")}</button><button class="btn del" id="vd">${t("Borrar")}</button></div>`;
   v.hidden = false;
   const close = () => { v.hidden = true; v.innerHTML = ""; };
   v.querySelector("#vx").onclick = close;
@@ -402,20 +420,23 @@ function openViewer(id) {
   v.querySelector("#vd").onclick = () => remove([id], close);
 }
 
+// Agregar a una colección (o quitar de la que se está viendo). Una foto puede estar en varias.
 async function moveTo(ids, after) {
-  const opts = S.info.collections.map((c) => ({ label: collName(c.name), value: c.name }));
+  const chosen = S.photos.filter((p) => ids.includes(p.id));
+  const all = (name) => chosen.length && chosen.every((p) => (p.c || []).includes(name));
+  const opts = S.info.collections.map((c) => ({ label: (all(c.name) ? "✓ " : "") + c.name, value: c.name }));
   opts.push({ label: "+ " + t("Nueva colección"), value: "__new" });
-  let c = await sheet(t("Mover a…"), opts);
+  let c = await sheet(t("Agregar a colección"), opts);
   if (c === null) return;
   if (c === "__new") { c = await ask(t("Nueva colección"), "", t("Crear")); if (!c) return; }
-  await api("/api/move", { ids, collection: c });
-  toast(t("Movidas"));
+  if (all(c)) { await api("/api/collections/remove", { ids, name: c }); toast(t("Se quitó de “{c}”", { c })); }
+  else { await api("/api/collections/add", { ids, name: c }); toast(t("Agregadas a “{c}”", { c })); }
   done(after);
 }
 
 async function remove(ids, after) {
   const n = ids.length;
-  const ok = await sheet(t("¿Borrar {n}?", { n: count(n, "1 foto", "{n} fotos") }) + " " + t("Se mueven a la papelera de la Vitrina."),
+  const ok = await sheet(t("¿Borrar {n}?", { n: count(n, "1 foto", "{n} fotos") }) + " " + t("Se pueden recuperar durante 30 días en Colecciones → Eliminadas recientemente."),
     [{ label: t("Borrar"), value: true, danger: true }]);
   if (!ok) return;
   await api("/api/delete", { ids });
@@ -432,37 +453,105 @@ async function done(after) {
 
 // ---------------------------------------------------------------- colecciones
 function renderCollections() {
+  if (S.collPage === "trash") return renderTrash();
   const cover = {};
-  for (const p of S.photos) if (p.r && !(p.c in cover)) cover[p.c] = p.id;
-  const cols = S.info.collections.filter((c) => c.name || c.count);
+  for (const p of S.photos) if (p.r) for (const c of [...(p.c || []), ...(p.a || [])]) if (!(c in cover)) cover[c] = p.id;
+  const row = (key, title, sub, more) => `
+      <div class="row coll" data-c="${esc(key)}">
+        <div class="cover" style="${cover[key] ? `background-image:url(/t/${cover[key]}.jpg)` : ""}"></div>
+        <button class="grow" data-open style="text-align:left"><div class="title">${esc(title)}</div>
+          <div class="note">${sub}</div></button>
+        ${more ? `<button class="more" data-more aria-label="${t("Opciones")}">⋯</button>` : ""}
+      </div>`;
+  const autos = S.info.autos || [];
   $view.innerHTML = `
     <div class="head"><h1>${t("Colecciones")}</h1><button class="link" id="new">+ ${t("Nueva")}</button></div>
-    <div class="card">${cols.map((c) => `
-      <div class="row coll" data-c="${esc(c.name)}">
-        <div class="cover" style="${cover[c.name] ? `background-image:url(/t/${cover[c.name]}.jpg)` : ""}"></div>
-        <button class="grow" data-open style="text-align:left"><div class="title">${esc(collName(c.name))}</div>
-          <div class="note">${count(c.count, "1 foto", "{n} fotos")}</div></button>
-        ${c.name ? `<button class="more" data-more aria-label="${t("Renombrar")}">⋯</button>` : ""}
-      </div>`).join("")}</div>`;
+    ${S.info.collections.length ? `<div class="card">${S.info.collections.map((c) =>
+      row(c.name, c.name, count(c.count, "1 foto", "{n} fotos"), true)).join("")}</div>`
+      : `<p class="sub">${t("Todavía no tienes colecciones. Crea una con “+ Nueva”.")}</p>`}
+    ${autos.length ? `<div class="section">${t("Automáticas")}</div><div class="card">${autos.map((a) =>
+      row(a.key, a.title, count(a.count, "1 foto", "{n} fotos"), true)).join("")}</div>` : ""}
+    ${S.info.trash ? `<div class="card" style="margin-top:20px"><button class="row nav" id="trash">
+      <span class="grow title">${t("Eliminadas recientemente")}</span><span class="value">${S.info.trash}</span>
+      <span class="chevron">›</span></button></div>` : ""}`;
   $view.querySelector("#new").onclick = async () => {
     const name = await ask(t("Nueva colección"), "", t("Crear"));
     if (!name) return;
     await api("/api/collections/create", { name });
     await refresh(); render();
   };
+  const tr_ = $view.querySelector("#trash");
+  if (tr_) tr_.onclick = () => { S.collPage = "trash"; S.trashSel.clear(); renderCollections(); window.scrollTo(0, 0); };
   $view.querySelectorAll(".coll").forEach((row) => {
-    const c = row.dataset.c;
+    const c = row.dataset.c, auto = c.startsWith("auto:");
     row.querySelector("[data-open]").onclick = () => { S.filter = c; go("photos"); };
-    const more = row.querySelector("[data-more]");
-    if (more) more.onclick = async () => {
-      const name = await ask(t("Renombrar"), c, t("Guardar"));
-      if (!name || name === c) return;
-      try { await api("/api/collections/rename", { old: c, new: name }); }
-      catch (e) { if (e.status === 409) toast(t("Ya existe una colección con ese nombre")); return; }
+    row.querySelector("[data-more]").onclick = async () => {
+      const opts = auto ? [{ label: t("Guardar como colección"), value: "keep" }, { label: t("Ocultar"), value: "hide", danger: true }]
+        : [{ label: t("Renombrar"), value: "rename" }, { label: t("Borrar colección"), value: "delete", danger: true }];
+      const what = await sheet(auto ? filterTitle(c) : c, opts);
+      try {
+        if (what === "rename") {
+          const name = await ask(t("Renombrar"), c, t("Guardar"));
+          if (!name || name === c) return;
+          await api("/api/collections/rename", { old: c, new: name });
+        } else if (what === "delete") {
+          const ok = await sheet(t("¿Borrar la colección “{c}”?", { c }) + " " + t("Las fotos no se borran."),
+            [{ label: t("Borrar colección"), value: true, danger: true }]);
+          if (!ok) return;
+          await api("/api/collections/delete", { name: c });
+        } else if (what === "keep") {
+          const name = await ask(t("Guardar como colección"), filterTitle(c), t("Guardar"));
+          if (!name) return;
+          await api("/api/autos/keep", { key: c, name });
+        } else if (what === "hide") {
+          await api("/api/autos/hide", { key: c });
+        } else return;
+      } catch (e) { if (e.status === 409) toast(t("Ya existe una colección con ese nombre")); return; }
       await new Promise((r) => setTimeout(r, 300));
       await refresh(); render();
     };
   });
+}
+
+// Eliminadas recientemente: se recuperan o se borran para siempre (a los 30 días, solas).
+async function renderTrash() {
+  const draw = () => {
+    const n = S.trashSel.size;
+    $view.innerHTML = `
+      <button class="back" id="back">‹ ${t("Colecciones")}</button>
+      <h1>${t("Eliminadas recientemente")}</h1>
+      <p class="sub">${t("Se borran para siempre 30 días después.")} ${S.trash.length ? t("Toca para elegir; sin elegir, aplica a todas.") : ""}</p>
+      ${S.trash.length ? `<div class="grid">${S.trash.map((p) => `<button class="cell ${S.trashSel.has(p.id) ? "sel" : ""}" data-id="${p.id}">
+        ${p.r ? `<img loading="lazy" src="/t/${p.id}.jpg" alt="" class="loaded">` : ""}
+        <span class="dur">${p.days === 1 ? t("1 día") : t("{n} días", { n: p.days })}</span><span class="check"></span></button>`).join("")}</div>
+      <div class="actions"><button class="btn soft" id="restore">${n ? t("Recuperar ({n})", { n }) : t("Recuperar todas")}</button>
+        <button class="btn del" id="purge">${n ? t("Borrar ({n})", { n }) : t("Vaciar")}</button></div>`
+      : `<div class="empty">${t("No hay fotos eliminadas")}</div>`}`;
+    $view.querySelector("#back").onclick = () => { S.collPage = null; renderCollections(); window.scrollTo(0, 0); };
+    $view.querySelectorAll(".cell").forEach((el) => {
+      el.onclick = () => { const id = el.dataset.id; S.trashSel.has(id) ? S.trashSel.delete(id) : S.trashSel.add(id); draw(); };
+    });
+    const ids = () => (S.trashSel.size ? [...S.trashSel] : S.trash.map((p) => p.id));
+    const rs = $view.querySelector("#restore"), pg = $view.querySelector("#purge");
+    if (rs) rs.onclick = async () => {
+      await api("/api/trash/restore", { ids: ids() }); toast(t("Recuperadas"));
+      S.trashSel.clear(); await reload();
+    };
+    if (pg) pg.onclick = async () => {
+      const ok = await sheet(t("¿Borrar para siempre?") + " " + t("Ya no se podrán recuperar."),
+        [{ label: t("Borrar"), value: true, danger: true }]);
+      if (!ok) return;
+      await api("/api/trash/purge", S.trashSel.size ? { ids: [...S.trashSel] } : { all: true });
+      S.trashSel.clear(); await reload();
+    };
+  };
+  const reload = async () => {
+    try { S.trash = await api("/api/trash"); } catch { S.trash = []; }
+    try { await refresh(); } catch {}
+    if (S.tab === "collections" && S.collPage === "trash") draw();
+  };
+  draw();
+  await reload();
 }
 
 // ---------------------------------------------------------------- ajustes

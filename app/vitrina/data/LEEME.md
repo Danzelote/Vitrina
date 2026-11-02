@@ -7,3 +7,8 @@
   de una foto sin internet.
 - **countries.json**: nombres de los países en español e inglés, de
   [pycountry](https://github.com/pycountry/pycountry) (ISO 3166).
+
+- `face_detection_yunet_2023mar.onnx`: detector de caras YuNet, de
+  [opencv_zoo](https://github.com/opencv/opencv_zoo/tree/main/models/face_detection_yunet)
+  (licencia MIT). Solo encuentra dónde hay caras (para que el Ken Burns no las corte);
+  no reconoce quién es.

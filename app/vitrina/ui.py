@@ -27,7 +27,10 @@ from . import night as NIGHT  # noqa: E402
 from . import nightclock as NC  # noqa: E402
 from . import i18n as I18N  # noqa: E402
 from .i18n import tr  # noqa: E402
-from .places import place_of  # noqa: E402
+from .places import place_of, PLACES  # noqa: E402
+from . import autos as AUTOS  # noqa: E402
+from . import organize as ORG  # noqa: E402
+from . import faces as FACES  # noqa: E402
 from . import wifi as WIFI  # noqa: E402
 from . import qrscan as QR  # noqa: E402
 from . import splash as SPL  # noqa: E402
@@ -88,7 +91,7 @@ def is_short(item):
     return item.is_video and 0 < (item.duration or 0) < SHORT_VIDEO
 
 
-class App:
+class App(ORG.OrganizeMixin):
     def __init__(self, items, processor=None, fullscreen=False, invert_zoom=False, size=(1280, 800),
                  debug_input=False, lib=None, splash=None):
         self.debug_input = debug_input
@@ -119,7 +122,7 @@ class App:
         self.search_open, self.search_text, self.search_due = False, "", None
         self.plane = cam.Grid(range(len(items)))
         self.regrid = None          # animación al cambiar de colección o búsqueda
-        self.groups = LV.Groups(items)
+        self.groups = self.make_groups(items)
 
         now = time.monotonic()
         self.mode = FRAME
@@ -254,6 +257,11 @@ class App:
                 stdin=subprocess.DEVNULL, timeout=15).stdout.strip(), flush=True), daemon=True).start()
         self.update_done_at = None
         self.help_open = False      # lista de atajos de teclado (tecla H)
+        self.init_organize()        # menús ···, seleccionar, papelera (organize.py)
+        self.faces = FACES.FaceScanner()    # dónde hay caras (para el Ken Burns)
+        if lib:
+            self.faces.attach(self.items)
+            self.faces.start()
         self.help_at = 0.0
         self.help_amt = 0.0
         self.scan = None            # cámara leyendo el código QR del WiFi: {"scanner", "start", "tex"}
@@ -336,11 +344,42 @@ class App:
 
     # ------------------------------------------------------------------ filtro
 
+    def make_groups(self, items):
+        """Meses, años y colecciones (las de la persona y las automáticas)."""
+        lib = getattr(self, "lib", None)
+        if not lib:
+            return LV.Groups(items)
+        al = lib.albums
+        try:
+            autos = AUTOS.build(items, place_of, al.hidden_auto)
+        except Exception as exc:       # noqa: BLE001 (sin automáticas, todo lo demás sigue)
+            print("Colecciones automáticas:", exc, flush=True)
+            autos = []
+        self.autos_places = PLACES.ready     # al cargar los lugares, se rehacen con nombres
+        return LV.Groups(items, list(al.names), autos, len(al.trash))
+
+    def regroup(self, now=None):
+        """Las colecciones cambiaron (no las fotos): se rehacen grupos y filtro."""
+        self.groups = self.make_groups(self.items)
+        if self.coll_filter and not self.groups.group_for(self.coll_filter):
+            self.coll_filter = None
+        if self.mode == GRID and self.lvl == PHOTOS:
+            self.refilter(now, True)
+
+    def filter_title(self):
+        g = self.groups.group_for(self.coll_filter) if self.coll_filter else None
+        return g.title if g else (self.coll_filter or "")
+
     def matches(self, i):
-        it = self.items[i]
-        if self.coll_filter is not None and it.collection != self.coll_filter:
-            return False
-        return self.query_ok is None or self.query_ok(it)
+        f = self.coll_filter
+        if f is not None:
+            g = self.groups.autos.get(f) if f.startswith("auto:") else None
+            if g is not None:
+                if i not in g.member_set:
+                    return False
+            elif f not in self.items[i].collections:
+                return False
+        return self.query_ok is None or self.query_ok(self.items[i])
 
     def grid_members(self):
         members = [i for i in range(len(self.items)) if self.matches(i)]
@@ -490,7 +529,9 @@ class App:
         # (HEVC, 4K) son demasiado pesados y se ve la portada mientras tanto.
         if not (VID.AVAILABLE and item.is_video and item.ready and item.video_ready):
             return
-        if role in ("frame", "next", "view", "view_next", "warm") and is_short(item):
+        if role in ("view", "view_next", "warm"):
+            loop = True     # en pantalla grande, como en el iPhone: vuelve a empezar solo
+        elif role in ("frame", "next") and is_short(item):
             loop = True     # como un GIF: se repite sin cortes (la presentación decide cuándo sigue)
         try:
             p = VID.Player(self.ren, path or item.play_path, self.video_size(item, max_w), audio=audio,
@@ -576,6 +617,7 @@ class App:
             self.m = 0.0
         self.mode = FRAME
         self.settings_open = False
+        self.close_organize()
         self.help_open = False          # en la presentación no se ven: que no la tengan despierta
         if self.search_open:
             self.close_search()
@@ -823,7 +865,7 @@ class App:
             return
         if lvl == YEARS and not self.groups.has_years:
             return
-        if lvl == COLLS and not self.groups.coll_list:
+        if lvl == COLLS and not self.lib and not self.groups.coll_list:
             return
         self.lvl_prev, self.lvl = self.lvl, lvl
         self.lvl_tween = Tween((0.0,), (1.0,), LEVEL_TIME, EASE, now)
@@ -867,9 +909,12 @@ class App:
         elif self.lvl == MONTHS:
             self.to_photos(g.members[0] if g else self.hero, now, origin)
         elif self.lvl == COLLS:
+            if g and g.kind in ("new", "trash"):
+                self.open_group(g, now)
+                return
             if g:
                 self.set_filter(g.key)
-            self.to_photos(g.members[0] if g else self.hero, now, origin)
+            self.to_photos(g.members[0] if g and g.members else self.hero, now, origin)
 
     def open_group(self, g, now):
         origin = (self.mx, self.my)
@@ -877,9 +922,13 @@ class App:
             self.to_months(self.groups.month_scroll_for_year(g.key, self.vw, self.vh), now, origin)
         elif g.kind == "month":
             self.to_photos(g.members[0], now, origin)
-        elif g.kind == "coll":
+        elif g.kind in ("coll", "auto"):
             self.set_filter(g.key)
-            self.to_photos(g.members[0], now, origin)
+            self.to_photos(g.members[0] if g.members else self.hero, now, origin)
+        elif g.kind == "new":
+            self.ask_new_collection(now)
+        elif g.kind == "trash":
+            self.open_trash(now)
 
     def pick_level(self, lvl, now):
         if lvl == PHOTOS:
@@ -981,9 +1030,26 @@ class App:
     # -- Ken Burns ----------------------------------------------------------
 
     def kb_start(self, i, now):
-        style = KB.OFF if self.items[i].is_video else self.settings.kenburns
+        item = self.items[i]
+        style = KB.OFF if item.is_video else self.settings.kenburns
         self.kb = {k: v for k, v in self.kb.items() if k == self.hero}
-        self.kb[i] = (now, KB.Motion(style))
+        self.kb[i] = (now, KB.Motion(style, faces=self.faces_in_frame(item)))
+
+    def faces_in_frame(self, item):
+        """Las caras de la foto en coordenadas del rectángulo de la presentación
+        (relativas a su centro, de -0.5 a 0.5), contando el recorte para llenarlo."""
+        if not item.faces or not item.height:
+            return None
+        _x, _y, w, h = self.frame_rect(item)
+        ar, ap = w / h, item.aspect
+        cw, ch = (ar / ap, 1.0) if ap > ar else (1.0, ap / ar)
+        out = []
+        for fx, fy, fw, fh in item.faces:
+            # Un poco más grande que la cara: que quepan también el pelo y la barbilla.
+            px, py = fw * 0.15, fh * 0.2
+            out.append(((fx - px - 0.5) / cw, (fy - py - 0.5) / ch,
+                        (fx + fw + px - 0.5) / cw, (fy + fh + py * 0.6 - 0.5) / ch))
+        return out
 
     def kb_active(self, i):
         e = self.kb.get(i)
@@ -1165,6 +1231,29 @@ class App:
             return
         if e.type == pygame.KEYDOWN and e.key in MEDIA_KEYS:
             self.media_key(MEDIA_KEYS[e.key], now)
+            return
+        if self.organize_open():
+            # Menú, ventana o papelera abiertos: solo ellos reciben el teclado y el mouse.
+            if e.type == pygame.MOUSEMOTION:
+                self.mx, self.my = e.pos
+                self.show_pointer(True)
+            elif e.type == pygame.MOUSEBUTTONUP and e.button == 1:
+                self.on_click(now)
+            elif self.dialog:
+                self.dialog_event(e, now)
+            elif self.menu and e.type == pygame.KEYDOWN:
+                m = self.menu
+                if e.key == pygame.K_ESCAPE:
+                    self.menu = None
+                elif e.key in (pygame.K_DOWN, pygame.K_UP):
+                    n = len(m["items"])
+                    cur = m["sel"] if m["sel"] is not None else (-1 if e.key == pygame.K_DOWN else n)
+                    m["sel"] = (cur + (1 if e.key == pygame.K_DOWN else -1)) % n
+                elif e.key in (pygame.K_RETURN, pygame.K_KP_ENTER) and m["sel"] is not None:
+                    self.menu_pick(m["sel"], now)
+            elif self.trash_ui and not self.menu:
+                self.trash_event(e, now)
+            self.last_move = now
             return
         if self.search_open and e.type in (pygame.KEYDOWN, pygame.TEXTINPUT) \
                 and not (e.type == pygame.KEYDOWN and e.key in MEDIA_KEYS):
@@ -1357,6 +1446,16 @@ class App:
         self.help_at = now
 
     def on_key(self, e, now):
+        if self.select and e.key == pygame.K_ESCAPE:
+            self.select = None
+            return
+        if e.key in (pygame.K_DELETE, pygame.K_BACKSPACE) and self.lib:
+            if self.mode == VIEWER:
+                self.ask_trash([self.items[self.current_viewer_index()].key], now)
+                return
+            if self.select and self.select["mode"] == "pick" and self.select["keys"]:
+                self.ask_trash(set(self.select["keys"]), now)
+                return
         if e.key == pygame.K_f and e.mod & (pygame.KMOD_CTRL | pygame.KMOD_GUI) and self.items:
             self.open_search(now)
             return
@@ -1495,7 +1594,10 @@ class App:
             self.close_viewer(now)
         elif self.mode == GRID and now >= self.long_until - 0.2:
             if self.lvl == PHOTOS and self.hover_i is not None:
-                self.open_viewer(self.hover_i, now)
+                if self.select:
+                    self.select_toggle(self.hover_i)
+                else:
+                    self.open_viewer(self.hover_i, now)
             elif self.lvl != PHOTOS and self.hover_group is not None:
                 self.open_group(self.hover_group, now)
 
@@ -1552,14 +1654,22 @@ class App:
                 if len(event) > 2:
                     event[2].set()     # el servidor web espera a que se haya aplicado
         if self.lib and self.lib.version != self.lib_version:
-            # Se aplica cuando no estorba: en la presentación, sin fundido en curso.
-            if not self.items or (self.mode == FRAME and not self.fade and not self.cam_tween):
+            snap = self.lib.snapshot
+            if len(snap) == len(self.items) and all(a is b for a, b in zip(snap, self.items)):
+                # Mismas fotos, otras colecciones: se aplica ya, en cualquier modo.
                 self.lib_version = self.lib.version
-                self.set_items(list(self.lib.snapshot), now)
+                self.regroup(now)
+            # Fotos nuevas o borradas: cuando no estorba (presentación, sin fundido).
+            elif not self.items or (self.mode == FRAME and not self.fade and not self.cam_tween):
+                self.lib_version = self.lib.version
+                self.set_items(list(snap), now)
+        if self.lib and not self.autos_places and PLACES.ready:
+            self.regroup(now)                # ya hay nombres de lugares para los viajes
 
     def handle_event(self, kind, data, now):
         if kind == "added" and self.lib:
-            new = self.lib.add_paths(data)
+            paths, cols = data if isinstance(data, tuple) else (data, None)
+            new = self.lib.add_paths(paths, cols)
             if new:
                 self.new_keys.extend(it.key for it in new)
                 # Varias subidas seguidas suman en el mismo aviso.
@@ -1573,10 +1683,9 @@ class App:
                 self.toast = (text, now - 0.4 if recent else now)   # si ya se veía, no vuelve a aparecer
         elif kind == "removed" and self.lib:
             self.lib.remove_paths(data)
-        elif kind == "moved" and self.lib:
-            self.lib.moved(data)
-        elif kind == "renamed" and self.lib:
-            self.lib.renamed_collection(*data)
+        elif kind == "lib" and self.lib:
+            name, args = data            # cambios de colecciones o papelera desde el celular
+            getattr(self.lib, name)(*args)
         elif kind == "settings":
             self.apply_settings(data, now)
         elif kind == "tzset":
@@ -1612,15 +1721,17 @@ class App:
             else:
                 p.close()
         self.kb = {idx[k]: v for k, v in kb.items() if k in idx}
-        self.groups = LV.Groups(items)
-        if self.coll_filter and not any(it.collection == self.coll_filter for it in items):
+        self.groups = self.make_groups(items)
+        if self.coll_filter and not self.groups.group_for(self.coll_filter):
             self.coll_filter = None
+        if self.lib:
+            self.faces.attach(items)
         self.plane = cam.Grid(self.grid_members())
         self.regrid = None
         self.queue, self.memory_queue, self.seq_pos, self._next = [], [], None, None
         self.slide_history = []
         self.hover_i = self.hover_group = None
-        if self.coll_filter and not any(it.collection == self.coll_filter for it in items):
+        if self.coll_filter and not self.groups.group_for(self.coll_filter):
             self.coll_filter = None
         if not items:
             self.hero = self.morph_i = 0
@@ -1758,8 +1869,8 @@ class App:
         else:
             self.hover_group = None
 
-        if self.settings_open:
-            self.last_move = now
+        if self.settings_open or self.select or self.organize_open():
+            self.last_move = now        # mientras organiza, no regresa sola a la presentación
         vp = self.player_for("view", self.morph_i)
         if self.mode == VIEWER and vp and vp.is_playing:
             self.last_move = now   # no regresa a la presentación mientras se ve un video
@@ -2062,6 +2173,9 @@ class App:
             self.draw_scene(now)
         self.draw_night(now)
         self.draw_help(now)
+        self.draw_trash(now)
+        self.draw_menu(now)
+        self.draw_dialog(now)
         self.draw_power(now)
         if self.inst:
             self.draw_install(now)
@@ -2767,6 +2881,13 @@ class App:
                 self.draw_tile(self.items[i], x, y, w, w, a, radius * k, bg, idx=i, badge=True)
 
     def draw_tile(self, item, x, y, w, h, alpha, radius, bg, prefer_screen=False, idx=None, badge=False, snap=True):
+        if self.select and badge and idx is not None:
+            self._draw_tile(item, x, y, w, h, alpha * self.tile_alpha(idx), radius, bg, prefer_screen, idx, badge, snap)
+            self.draw_tile_check(idx, x, y, w, alpha)
+            return
+        self._draw_tile(item, x, y, w, h, alpha, radius, bg, prefer_screen, idx, badge, snap)
+
+    def _draw_tile(self, item, x, y, w, h, alpha, radius, bg, prefer_screen=False, idx=None, badge=False, snap=True):
         g = self.gfx
         if w <= C.MINI_BELOW and h <= C.MINI_BELOW and not prefer_screen:
             # Mosaico: miniaturas diminutas, todas en unas cuantas hojas (ligero
@@ -2881,7 +3002,10 @@ class App:
             title_size, folder = 24, True
         for t in tiles:
             h = 1.0 if interactive and hover is t.group else 0.0
-            r = LV.draw_tile(g, items, t, now, alpha, bg, h, title_size, folder, view)
+            if not t.group.members:          # "Nueva colección", la papelera o una colección vacía
+                r = self.draw_special_tile(t, alpha, h, view)
+            else:
+                r = LV.draw_tile(g, items, t, now, alpha, bg, h, title_size if t.size > 180 else 16, folder, view)
             if interactive and r:
                 self.cluster_rects.append((t.group, (t.x, t.y, t.size, t.size)))
 
@@ -3131,6 +3255,13 @@ class App:
         g.rect(0, BAR_H - 1, self.vw, 1, T.hairline, T.hairline_alpha * a)
         self.ui_rects.append((0, 0, self.vw, BAR_H))
         y = (BAR_H - 44) / 2
+        if self.select and self.lvl == PHOTOS:
+            # Seleccionando: arriba solo cuántas y qué hacer con ellas.
+            self.hits.append(((0, 0, self.vw, BAR_H), lambda now: None))
+            title = self.draw_select_bar(now, a, y)
+            g.label(title, 24, y + 12, 17, a, bold=True)
+            self.draw_grid_counters(now, a)
+            return
         # Derecha: presentación y ajustes, solo con íconos.
         sr = g.icon_button("gear", self.vw - 24 - 44, y, alpha=a, icon_size=24)
         self.hit(sr, self.open_settings)
@@ -3159,9 +3290,14 @@ class App:
         else:
             lr = g.icon_button("search", r[0] - 10 - 44, y, alpha=a, icon_size=20)
             self.hit(lr, lambda now: self.open_search(now))
+            if self.lib and self.lvl == PHOTOS and self.items and not self.select:
+                t = g.button(tr("Seleccionar"), 0, -999, h=44)
+                sel = g.button(tr("Seleccionar"), lr[0] - 10 - t[2], y, h=44, alpha=a)
+                self.hit(sel, self.start_select)
+
         # Izquierda: el nivel (años, meses, fotos, colecciones).
         options = [(YEARS, tr("Años")), (MONTHS, tr("Meses")), (PHOTOS, tr("Fotos"))]
-        if self.groups.coll_list:
+        if self.groups.coll_list or self.lib:
             options.append((COLLS, tr("Colecciones")))
         disabled = () if self.groups.has_years else (YEARS,)
         seg_x = 24
@@ -3171,25 +3307,33 @@ class App:
                 self.hit(rect, lambda now, k=key: self.pick_level(k, now))
         chip_x = seg_x + total + 12
         if self.coll_filter:
-            fr = g.button(f"{self.coll_filter}  ×", chip_x, y + 6, h=32, alpha=a, active=True, size=13, pad=14)
+            fr = g.button(f"{self.filter_title()}  ×", chip_x, y + 6, h=32, alpha=a, active=True, size=13, pad=14)
             self.hit(fr, lambda now: self.set_filter(None, now))
             chip_x = fr[0] + fr[2] + 8
+            if self.lib and self.lvl == PHOTOS:
+                mr = g.icon_button("more", chip_x, y + 6, size=32, alpha=a, icon_size=18)
+                self.hit(mr, lambda now, mr=mr: self.filter_menu(now, mr))
+                chip_x = mr[0] + mr[2] + 8
         if self.query and not self.search_open:
             qr_ = g.button(f"“{self.query}”  ×", chip_x, y + 6, h=32, alpha=a, active=True, size=13, pad=14)
             self.hit(qr_, lambda now: self.clear_search(now))
-        # Abajo: contador y zoom
+        self.draw_grid_counters(now, a)
+
+    def draw_grid_counters(self, now, a):
+        """Abajo: contador y zoom."""
+        g = self.gfx
         if self.lvl == PHOTOS:
             shown = [self.items[i] for i in range(len(self.items)) if self.matches(i)]
             nv = sum(1 for it in shown if it.is_video)
             counts = I18N.media_count(len(shown) - nv, nv)
-            main = tr("{n} en {c}", n=counts, c=self.coll_filter) if self.coll_filter else counts
+            main = tr("{n} en {c}", n=counts, c=self.filter_title()) if self.coll_filter else counts
             sub = None
         elif self.lvl == MONTHS:
             main, sub = tr("Meses"), tr("· {n} con fotos", n=len(self.groups.months))
         elif self.lvl == YEARS:
             main, sub = tr("Años"), f"· {len(self.groups.year_list)}"
         else:
-            main, sub = tr("Colecciones"), f"· {len(self.groups.coll_list)}"
+            main, sub = tr("Colecciones"), f"· {len(self.groups.coll_list) + len(self.groups.auto_list)}"
         g.pill(main, 24, self.vh - 64, 13, a, anchor="left", sublabel=sub)
         bx, by = self.vw - 24 - 104, self.vh - 68
         g.round_rect(bx, by, 104, 44, T.pill, a)
@@ -3258,6 +3402,9 @@ class App:
         y = (BAR_H - 44) / 2
         r2 = g.icon_button("play_here", self.vw - 24 - 44 - 10 - 44, y, alpha=a, icon_size=22)
         self.hit(r2, lambda now: self.go_frame(self.current_viewer_index(), now))
+        if self.lib:
+            r3 = g.icon_button("more", r2[0] - 10 - 44, y, alpha=a, icon_size=22)
+            self.hit(r3, lambda now, r3=r3: self.photo_menu(now, r3))
         cur = self.current_viewer_index()
         for d, x in ((-1, 24), (1, self.vw - 24 - 48)):
             if self.neighbor(cur, d) is None:

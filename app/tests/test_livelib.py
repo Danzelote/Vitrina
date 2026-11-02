@@ -14,30 +14,46 @@ def make(path, date="2024:05:01 10:00:00"):
     img.save(path, "JPEG", exif=exif)
 
 
-def test_add_move_rename_remove(tmp_path):
+def test_collections_and_trash(tmp_path):
     folder = str(tmp_path)
     make(os.path.join(folder, "a.jpg"))
+    make(os.path.join(folder, "Viaje", "old.jpg"), "2023:03:03 10:00:00")     # carpeta de antes
     lib = livelib.LiveLibrary(folder, library.scan(folder), None)
-    assert [it.collection for it in lib.items] == [""]
-    p = os.path.join(folder, "Viaje", "b.jpg")
+    by = {os.path.basename(it.path): it for it in lib.items}
+    assert by["a.jpg"].collections == () and by["old.jpg"].collections == ("Viaje",)
+    # Fotos nuevas en varias colecciones a la vez.
+    p = os.path.join(folder, "b.jpg")
     make(p, "2025:01:02 10:00:00")
-    new = lib.add_paths([p, p])
-    assert len(new) == 1 and lib.items[0].collection == "Viaje" and lib.items[0].date == datetime(2025, 1, 2, 10)
+    new = lib.add_paths([p, p], ["Casa", "Daniel"])
+    assert len(new) == 1 and lib.items[0].collections == ("Casa", "Daniel")
+    assert lib.items[0].date == datetime(2025, 1, 2, 10)
     key = new[0].key
-    dest = os.path.join(folder, "Casa", "b.jpg")
-    os.makedirs(os.path.dirname(dest))
-    os.replace(p, dest)
-    lib.moved([(p, dest)])
-    assert lib.items[0].collection == "Casa" and lib.items[0].key == key
-    os.rename(os.path.join(folder, "Casa"), os.path.join(folder, "Hogar"))
-    lib.renamed_collection("Casa", "Hogar")
-    assert lib.items[0].path == os.path.join(folder, "Hogar", "b.jpg")
-    assert library.scan_file(folder, lib.items[0].path).key == key   # la clave no cambia al moverse
-    trash = livelib.to_trash(folder, lib.items[0].path)
-    lib.remove_paths([os.path.join(folder, "Hogar", "b.jpg")])
-    assert len(lib.items) == 1 and ".papelera" in trash
-    assert [it.path for it in library.scan(folder)] == [os.path.join(folder, "a.jpg")]   # la papelera no cuenta
-    assert ("Hogar", 0) in lib.collections()
+    lib.add_to([by["a.jpg"].key], "Casa")
+    assert dict(lib.collections())["Casa"] == 2
+    lib.remove_from([key], "Daniel")
+    assert lib.items[0].collections == ("Casa",)
+    assert lib.rename_collection("Casa", "Hogar")
+    assert lib.items[0].collections == ("Hogar",)
+    # Quitar de una colección se recuerda (la carpeta ya no manda).
+    lib.remove_from([by["old.jpg"].key], "Viaje")
+    lib2 = livelib.LiveLibrary(folder, library.scan(folder), None)
+    again = {os.path.basename(it.path): it for it in lib2.items}
+    assert again["old.jpg"].collections == () and again["b.jpg"].collections == ("Hogar",)
+    assert ("Viaje", 0) in lib2.collections()               # la colección vacía sigue
+    lib2.delete_collection("Viaje")
+    assert "Viaje" not in dict(lib2.collections())
+    # Papelera: se va, se recupera con sus colecciones, se borra a los 30 días.
+    assert lib2.trash_keys([key]) == 1
+    assert all(it.key != key for it in lib2.items)
+    assert [it.path for it in library.scan(folder) if it.key == key] == []     # la papelera no cuenta
+    (t_it, rec), = lib2.trash_items()
+    assert rec["collections"] == ["Hogar"]
+    assert lib2.restore([t_it.path]) == 1
+    back = next(it for it in lib2.items if it.key == key)
+    assert back.collections == ("Hogar",) and os.path.exists(back.path)
+    lib2.trash_keys([key])
+    lib2.albums.trash[next(iter(lib2.albums.trash))]["deleted"] -= 31 * 86400
+    assert lib2.purge(older_than=30) == 1 and lib2.trash_items() == []
 
 
 def test_safe_name():

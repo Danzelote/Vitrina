@@ -128,8 +128,8 @@ class UsbImport:
         web = getattr(app, "web", None)
         v = getattr(web, "v", None)
         try:
-            collection = offer["label"] if offer["into_collection"] else ""
-            target = livelib.collection_dir(lib.folder, collection)
+            cols = [livelib.safe_name(offer["label"])] if offer["into_collection"] else []
+            target = lib.folder
             tmp_dir = os.path.join(lib.folder, ".subiendo")
             os.makedirs(tmp_dir, exist_ok=True)
             batch = []
@@ -167,17 +167,17 @@ class UsbImport:
                         job["added"] += 1
                 job["done"] += 1
                 if len(batch) >= 8:
-                    self._tell(batch)
+                    self._tell(batch, cols)
                     batch = []
             if batch:
-                self._tell(batch)
+                self._tell(batch, cols)
         except Exception as exc:       # noqa: BLE001
             job["error"] = str(exc)
         finally:
             _run(["usb-umount", offer["dev"]])
             job["finished"] = True
 
-    def _tell(self, paths):
+    def _tell(self, paths, cols):
         done = threading.Event()
-        self.app.events.put(("added", list(paths), done))
+        self.app.events.put(("added", (list(paths), cols), done))
         done.wait(10)

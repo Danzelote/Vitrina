@@ -66,7 +66,7 @@ def cache_dir():
 @dataclass
 class Item:
     path: str
-    collection: str
+    folder: str                 # subcarpeta donde está el archivo ("" en la raíz)
     date: datetime
     key: str
     width: int = 0
@@ -83,6 +83,15 @@ class Item:
     video_ready: bool = False
     lat: float = None                                   # ubicación, si la foto la trae
     lon: float = None
+    collections: tuple = ()     # colecciones de la persona (ver albums.py)
+    dated: bool = True          # la fecha viene de la foto (no de cuándo se copió)
+    lens: str = ""              # lente (para reconocer selfies: "front camera")
+    faces: tuple = ()           # caras: ((x, y, w, h) de 0 a 1, …), ver faces.py
+
+    @property
+    def collection(self):
+        """La primera colección (para textos cortos); "" si no tiene."""
+        return self.collections[0] if self.collections else ""
 
     @property
     def play_path(self):
@@ -117,6 +126,14 @@ def _date_from_exif(img):
     except Exception:
         pass
     return None
+
+
+def _lens_from_exif(img):
+    try:
+        exif = img.getexif().get_ifd(0x8769)
+        return str(exif.get(0xA434) or "")[:80]
+    except Exception:
+        return ""
 
 
 def _gps_from_exif(img):
@@ -213,7 +230,7 @@ def scan_file(folder, path):
         st = os.stat(path)
     except OSError:
         return None
-    date, duration, lat, lon = None, 0.0, None, None
+    date, duration, lat, lon, lens = None, 0.0, None, None, ""
     if kind == "video":
         duration, date, (lat, lon) = probe(path)
         if duration <= 0:
@@ -223,6 +240,7 @@ def scan_file(folder, path):
             with open_image(path, decode=False) as img:
                 date = _date_from_exif(img)
                 lat, lon = _gps_from_exif(img)
+                lens = _lens_from_exif(img)
                 if not date and img.info.get("raw_date"):
                     try:
                         date = datetime.strptime(img.info["raw_date"], "%Y:%m:%d %H:%M:%S")
@@ -230,10 +248,13 @@ def scan_file(folder, path):
                         pass
         except Exception:
             return None
-    date = date or _date_from_name(name) or datetime.fromtimestamp(st.st_mtime)
-    return Item(path=path, collection=collection_of(folder, path), date=date,
+    dated = date is not None
+    date = date or _date_from_name(name)
+    dated = dated or date is not None
+    date = date or datetime.fromtimestamp(st.st_mtime)
+    return Item(path=path, folder=collection_of(folder, path), date=date,
                 key=item_key(path, st.st_size, st.st_mtime), is_video=kind == "video", duration=duration,
-                lat=lat, lon=lon)
+                lat=lat, lon=lon, dated=dated, lens=lens)
 
 
 def scan(folder):
@@ -309,6 +330,19 @@ class Processor:
                 self.videos_done += 1
             else:
                 self._videos.append(it)
+
+    def prepare_only(self, it):
+        """Rutas de caché para una foto fuera de la biblioteca (la papelera):
+        si ya estaba preparada sirve como está; si no, se prepara."""
+        it.thumb_path = os.path.join(self.dir, it.key + "_t.jpg")
+        it.screen_path = os.path.join(self.dir, it.key + "_s.jpg")
+        it.backdrop_path = os.path.join(self.dir, it.key + "_b.jpg")
+        m = self.meta.get(it.key)
+        if m and os.path.exists(it.thumb_path):
+            it.width, it.height = m[0], m[1]
+            it.ready = True
+        else:
+            self.add([it])
 
     def start(self):
         with self._cv:

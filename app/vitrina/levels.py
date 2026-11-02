@@ -25,10 +25,11 @@ FADE_PART = 0.22                   # fracción del ciclo que dura el fundido
 
 @dataclass
 class Group:
-    kind: str                      # "month" | "year" | "coll"
+    kind: str                      # "month" | "year" | "coll" | "auto" | "new" | "trash"
     key: object
     members: list = field(default_factory=list)   # índices de fotos, de la más reciente a la más antigua
     order: int = 0                 # para escalonar las mini presentaciones
+    title: str = ""                # para las automáticas
 
 
 @dataclass
@@ -41,19 +42,45 @@ class Tile:
     sub: str
 
 
+AUTO_SHOWN = 12                    # viajes y eventos que se muestran de cada tipo (los más recientes)
+
+
 class Groups:
-    def __init__(self, items):
+    def __init__(self, items, names=(), autos=(), trash_count=0):
         self.months, self.years, self.colls = {}, {}, {}
+        for n in names:                                   # también las vacías
+            self.colls[n] = Group("coll", n, title=n)
         for i, it in enumerate(items):
             mk = (it.date.year, it.date.month)
             self.months.setdefault(mk, Group("month", mk)).members.append(i)
             self.years.setdefault(it.date.year, Group("year", it.date.year)).members.append(i)
-            if it.collection:
-                self.colls.setdefault(it.collection, Group("coll", it.collection)).members.append(i)
+            for c in it.collections:
+                self.colls.setdefault(c, Group("coll", c, title=c)).members.append(i)
         self.year_list = sorted(self.years, reverse=True)
-        self.coll_list = sorted(self.colls, key=lambda k: -len(self.colls[k].members))
-        for n, g in enumerate(list(self.months.values()) + list(self.years.values()) + list(self.colls.values())):
+        self.coll_list = sorted(self.colls, key=lambda k: (-len(self.colls[k].members), k.lower()))
+        # Automáticas: por clave de foto (sobrevive a que cambien los índices).
+        index = {it.key: i for i, it in enumerate(items)}
+        self.autos, self.auto_list, shown = {}, [], {"trip": 0, "event": 0}
+        for a in autos:
+            members = sorted((index[k] for k in a.keys if k in index))
+            if not members:
+                continue
+            self.autos[a.key] = Group("auto", a.key, members, title=a.title)
+            self.autos[a.key].auto_kind = a.kind
+            self.autos[a.key].member_set = set(members)
+            if a.kind in shown:
+                shown[a.kind] += 1
+                if shown[a.kind] > AUTO_SHOWN:
+                    continue
+            self.auto_list.append(a.key)
+        self.trash_count = trash_count
+        for n, g in enumerate(list(self.months.values()) + list(self.years.values()) + list(self.colls.values())
+                              + list(self.autos.values())):
             g.order = n
+
+    def group_for(self, key):
+        """La colección (de la persona o automática) con esta clave, o None."""
+        return self.colls.get(key) or self.autos.get(key)
 
     @property
     def has_years(self):
@@ -106,10 +133,18 @@ class Groups:
     def grid_layout(n, vw, vh, max_size=300, gap=28):
         if n == 0:
             return []
-        cols = n if n <= 3 else (2 if n == 4 else 3)
-        rows = -(-n // cols)
         avail_w, avail_h = min(1200, vw - 80), vh - TOP - BOTTOM - 20
-        size = min(max_size, (avail_w - (cols - 1) * gap) / cols, (avail_h - (rows - 1) * gap) / rows)
+        if n > 9:
+            gap = 18
+
+        def fit(cols):
+            rows = -(-n // cols)
+            return min(max_size, (avail_w - (cols - 1) * gap) / cols, (avail_h - (rows - 1) * gap) / rows)
+        cols = n if n <= 3 else (2 if n == 4 else 3)
+        if n > 6:                       # muchas: las columnas que dejen los cuadros más grandes
+            cols = max(range(3, 9), key=fit)
+        rows = -(-n // cols)
+        size = fit(cols)
         w, h = cols * size + (cols - 1) * gap, rows * size + (rows - 1) * gap
         left, top = (vw - w) / 2, TOP + (vh - TOP - BOTTOM - h) / 2
         return [(left + (i % cols) * (size + gap), top + (i // cols) * (size + gap), size) for i in range(n)]
@@ -120,11 +155,25 @@ class Groups:
                 for y, (x, yy, s) in zip(self.year_list, pos)]
 
     def coll_tiles(self, vw, vh):
-        pos = self.grid_layout(len(self.coll_list), vw, vh)
+        """Las de la persona, las automáticas, "Nueva colección" y la papelera."""
+        groups = [self.colls[k] for k in self.coll_list] + [self.autos[k] for k in self.auto_list]
+        groups.append(Group("new", "new"))
+        if self.trash_count:
+            groups.append(Group("trash", "trash"))
+        pos = self.grid_layout(len(groups), vw, vh)
         out = []
-        for k, (x, yy, s) in zip(self.coll_list, pos):
-            inset = 14  # deja ver las "tarjetas" de atrás
-            out.append(Tile(self.colls[k], x, yy + inset, s - inset, k, I18N.photos(len(self.colls[k].members))))
+        for g, (x, yy, s) in zip(groups, pos):
+            inset = 14 if s > 160 else 8  # deja ver las "tarjetas" de atrás
+            if g.kind == "coll":
+                sub = I18N.photos(len(g.members))
+            elif g.kind == "auto":
+                sub = I18N.tr("Automática") + " · " + I18N.photos(len(g.members))
+            elif g.kind == "new":
+                sub = ""
+            else:
+                sub = I18N.photos(self.trash_count)
+            title = {"new": I18N.tr("Nueva colección"), "trash": I18N.tr("Eliminadas recientemente")}.get(g.kind, g.title)
+            out.append(Tile(g, x, yy + inset, s - inset, title, sub))
         return out
 
 

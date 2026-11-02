@@ -66,7 +66,7 @@ def matcher(query, place_of):
                 if not it.date or it.date.month != value:
                     return False
             else:
-                hay = norm(it.collection or "") + " " + norm(place_of(it) or "")
+                hay = " ".join(norm(c) for c in getattr(it, "collections", ())) + " " + norm(place_of(it) or "")
                 if value not in hay:
                     return False
         return True

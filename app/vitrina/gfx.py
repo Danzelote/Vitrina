@@ -493,6 +493,22 @@ class Gfx:
             pygame.draw.circle(surf, W, pt(0.42, 0.42), r)
             pygame.draw.circle(surf, clear, pt(0.42, 0.42), r - 0.08 * S)
             pygame.draw.line(surf, W, pt(0.60, 0.60), pt(0.84, 0.84), int(0.10 * S))
+        elif name == "more":                  # ···
+            for fx in (0.22, 0.50, 0.78):
+                pygame.draw.circle(surf, W, pt(fx, 0.5), 0.085 * S)
+        elif name == "plus":
+            w = int(0.10 * S)
+            pygame.draw.line(surf, W, pt(0.5, 0.18), pt(0.5, 0.82), w)
+            pygame.draw.line(surf, W, pt(0.18, 0.5), pt(0.82, 0.5), w)
+        elif name == "check":
+            w = int(0.12 * S)
+            pygame.draw.lines(surf, W, False, [pt(0.20, 0.52), pt(0.42, 0.74), pt(0.82, 0.30)], w)
+        elif name == "trash":
+            pygame.draw.rect(surf, W, pygame.Rect(*pt(0.16, 0.22), 0.68 * S, 0.08 * S), border_radius=int(0.03 * S))
+            pygame.draw.rect(surf, W, pygame.Rect(*pt(0.38, 0.12), 0.24 * S, 0.12 * S), border_radius=int(0.03 * S))
+            pygame.draw.polygon(surf, W, [pt(0.24, 0.34), pt(0.76, 0.34), pt(0.70, 0.88), pt(0.30, 0.88)])
+            for fx in (0.40, 0.50, 0.60):
+                pygame.draw.line(surf, clear, pt(fx, 0.44), pt(fx, 0.78), int(0.05 * S))
         elif name == "sun":
             pygame.draw.circle(surf, W, (c, c), 0.18 * S)
             for i in range(8):

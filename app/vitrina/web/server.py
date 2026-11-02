@@ -144,6 +144,7 @@ class WebServer:
         self.devices = Devices()
         self.dupes = Dupes(lib)
         self.upload_lock = threading.Lock()   # revisar repetidas y agregar, de una en una
+        self.trash_map = {}                   # clave -> Item de la papelera (para sus miniaturas)
         self.code, self.code_until = None, 0.0
         self.httpd = None
         for port in PORTS:
@@ -285,6 +286,7 @@ class Handler(BaseHTTPRequestHandler):
                      dibuja=self.v.app.gpu, cuadros_por_segundo=self.v.app.meter.fps,
                      cpu_app_pct=self.v.app.meter.app_pct, cpu_mac_pct=self.v.app.meter.mac_pct,
                      programas_pct_de_un_nucleo=self.v.app.meter.top,
+                     caras=self.v.app.faces.summary(),
                      ultimos_5s=self.v.app.meter.last, ultima_hora=self.v.app.meter.hour(),
                      nucleo=__import__("vitrina.power", fromlist=["kernel_report"]).kernel_report(),
                      **__import__("vitrina.power", fromlist=["sensors"]).sensors(),
@@ -292,6 +294,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(200, json.dumps(d, ensure_ascii=False, indent=2), "application/json; charset=utf-8")
         if path == "/api/photos":
             return self.photos()
+        if path == "/api/trash":
+            return self.trash_list()
         if path.startswith("/t/") or path.startswith("/s/"):
             return self.image(path[1], os.path.splitext(os.path.basename(path))[0])
         self.send(404, {"error": "no existe"})
@@ -308,6 +312,10 @@ class Handler(BaseHTTPRequestHandler):
         routes = {"/api/delete": self.delete, "/api/move": self.move, "/api/settings": self.settings,
                   "/api/collections/create": self.create_collection,
                   "/api/collections/rename": self.rename_collection, "/api/unpair": self.unpair,
+                  "/api/collections/add": self.add_to_collection, "/api/collections/remove": self.remove_from_collection,
+                  "/api/collections/delete": self.delete_collection,
+                  "/api/autos/hide": self.hide_auto, "/api/autos/keep": self.keep_auto,
+                  "/api/trash/restore": self.trash_restore, "/api/trash/purge": self.trash_purge,
                   "/api/timezone": self.timezone, "/api/update": self.update}
         fn = routes.get(path)
         if not fn:
@@ -368,6 +376,9 @@ class Handler(BaseHTTPRequestHandler):
             "photos": sum(1 for it in items if not it.is_video),
             "videos": sum(1 for it in items if it.is_video),
             "collections": [{"name": n, "count": c} for n, c in lib.collections()],
+            "autos": [{"key": k, "title": g.title, "count": len(g.members), "kind": getattr(g, "auto_kind", "")}
+                      for k, g in self.v.app.groups.autos.items()],
+            "trash": len(lib.albums.trash),
             "disk": disk,
             "settings": {k: getattr(st, k) for k in SETTINGS},
             "light_sensor": self.v.app.sensor.available,
@@ -377,7 +388,13 @@ class Handler(BaseHTTPRequestHandler):
     def photos(self):
         if not self.need_device():
             return
-        out = [{"id": it.key, "c": it.collection, "d": it.date.strftime("%Y-%m-%d"), "v": it.is_video,
+        autos = {}
+        for k, g in self.v.app.groups.autos.items():
+            for i in g.members:
+                if i < len(self.v.app.items):
+                    autos.setdefault(self.v.app.items[i].key, []).append(k)
+        out = [{"id": it.key, "c": list(it.collections), "a": autos.get(it.key, []),
+                "d": it.date.strftime("%Y-%m-%d"), "v": it.is_video,
                 "dur": round(it.duration), "r": it.ready, "p": place_of(it)}
                for it in self.v.lib.snapshot if not it.failed]
         self.send(200, out)
@@ -385,7 +402,7 @@ class Handler(BaseHTTPRequestHandler):
     def image(self, kind, key):
         if not self.need_device():
             return
-        it = next((it for it in self.v.lib.snapshot if it.key == key), None)
+        it = next((it for it in self.v.lib.snapshot if it.key == key), None) or self.v.trash_map.get(key)
         if it is None or not it.ready:
             return self.send(404, {"error": "no existe"})
         self.send_file(it.thumb_path if kind == "t" else it.screen_path, "private, max-age=31536000")
@@ -397,7 +414,13 @@ class Handler(BaseHTTPRequestHandler):
             return
         lib = self.v.lib
         name = livelib.safe_name(unquote(self.headers.get("X-Name", "")))
-        collection = livelib.safe_name(unquote(self.headers.get("X-Collection", "")))
+        raw = unquote(self.headers.get("X-Collections", "") or "")
+        try:
+            cols = [livelib.safe_name(str(c)) for c in json.loads(raw)] if raw else []
+        except ValueError:
+            cols = []
+        one = livelib.safe_name(unquote(self.headers.get("X-Collection", "")))   # celulares con la página vieja
+        cols = [c for c in dict.fromkeys(cols + ([one] if one else [])) if c]
         try:
             size = int(self.headers.get("Content-Length") or 0)
             modified = int(self.headers.get("X-Modified") or 0) / 1000
@@ -409,7 +432,7 @@ class Handler(BaseHTTPRequestHandler):
         if modified and library.item_key(name, size, modified) in {it.key for it in lib.snapshot}:
             self.discard(size)
             return self.send(200, {"status": "duplicate"})
-        target = livelib.collection_dir(lib.folder, collection)
+        target = lib.folder
         tmp_dir = os.path.join(lib.folder, ".subiendo")
         os.makedirs(tmp_dir, exist_ok=True)
         tmp = os.path.join(tmp_dir, secrets.token_hex(8) + "_" + name)
@@ -442,7 +465,7 @@ class Handler(BaseHTTPRequestHandler):
             dest = livelib.unique_path(os.path.join(target, name))
             os.replace(tmp, dest)
             self.v.dupes.note(dest)
-            tell_app(self.v.app, "added", [dest])
+            tell_app(self.v.app, "added", ([dest], cols))
         self.send(200, {"status": "added"})
 
     def discard(self, size):
@@ -457,37 +480,37 @@ class Handler(BaseHTTPRequestHandler):
         ids = set(ids or [])
         return [it for it in self.v.lib.snapshot if it.key in ids]
 
+    def _lib(self, name, *args):
+        """Cambio de la biblioteca: lo hace la interfaz (en su hilo) y aquí se espera."""
+        tell_app(self.v.app, "lib", (name, args))
+
     def delete(self, data):
         if not self.need_device():
             return
-        gone = []
-        for it in self._items(data.get("ids")):
-            try:
-                livelib.to_trash(self.v.lib.folder, it.path)
-                gone.append(it.path)
-            except OSError:
-                pass
-        tell_app(self.v.app, "removed", gone)
-        self.send(200, {"ok": True, "count": len(gone)})
+        ids = [it.key for it in self._items(data.get("ids"))]
+        self._lib("trash_keys", ids)
+        self.send(200, {"ok": True, "count": len(ids)})
 
     def move(self, data):
+        """Página vieja del celular: "mover a" = agregar a esa colección."""
+        data = dict(data, name=data.get("collection"))
+        return self.add_to_collection(data)
+
+    def add_to_collection(self, data):
         if not self.need_device():
             return
-        lib = self.v.lib
-        collection = livelib.safe_name(str(data.get("collection") or ""))
-        target = livelib.collection_dir(lib.folder, collection)
-        pairs = []
-        for it in self._items(data.get("ids")):
-            if it.collection == collection:
-                continue
-            dest = livelib.unique_path(os.path.join(target, os.path.basename(it.path)))
-            try:
-                shutil.move(it.path, dest)
-                pairs.append((it.path, dest))
-            except OSError:
-                pass
-        tell_app(self.v.app, "moved", pairs)
-        self.send(200, {"ok": True, "count": len(pairs)})
+        name = livelib.safe_name(str(data.get("name") or ""))
+        if not name:
+            return self.send(400, {"error": "nombre inválido"})
+        self._lib("add_to", [it.key for it in self._items(data.get("ids"))], name)
+        self.send(200, {"ok": True})
+
+    def remove_from_collection(self, data):
+        if not self.need_device():
+            return
+        name = str(data.get("name") or "")
+        self._lib("remove_from", [it.key for it in self._items(data.get("ids"))], name)
+        self.send(200, {"ok": True})
 
     def create_collection(self, data):
         if not self.need_device():
@@ -495,22 +518,73 @@ class Handler(BaseHTTPRequestHandler):
         name = livelib.safe_name(str(data.get("name") or ""))
         if not name:
             return self.send(400, {"error": "nombre inválido"})
-        livelib.collection_dir(self.v.lib.folder, name)
+        self._lib("create_collection", name)
         self.send(200, {"ok": True, "name": name})
 
     def rename_collection(self, data):
         if not self.need_device():
             return
-        folder = self.v.lib.folder
-        old = livelib.safe_name(str(data.get("old") or ""))
+        old = str(data.get("old") or "")
         new = livelib.safe_name(str(data.get("new") or ""))
-        src, dst = os.path.join(folder, old), os.path.join(folder, new)
-        if not old or not new or not os.path.isdir(src):
+        names = self.v.lib.albums.names
+        if not new or old not in names:
             return self.send(400, {"error": "nombre inválido"})
-        if os.path.exists(dst):
+        if new in names and new != old:
             return self.send(409, {"error": "ya existe"})
-        os.rename(src, dst)
-        tell_app(self.v.app, "renamed", (old, new))
+        self._lib("rename_collection", old, new)
+        self.send(200, {"ok": True})
+
+    def delete_collection(self, data):
+        if not self.need_device():
+            return
+        self._lib("delete_collection", str(data.get("name") or ""))
+        self.send(200, {"ok": True})
+
+    def hide_auto(self, data):
+        if not self.need_device():
+            return
+        self._lib("hide_auto", str(data.get("key") or ""))
+        self.send(200, {"ok": True})
+
+    def keep_auto(self, data):
+        """Una automática se vuelve colección normal (con nombre) y deja de ser automática."""
+        if not self.need_device():
+            return
+        key = str(data.get("key") or "")
+        g = self.v.app.groups.autos.get(key)
+        name = livelib.safe_name(str(data.get("name") or "")) or (g.title if g else "")
+        if not g or not name:
+            return self.send(400, {"error": "no existe"})
+        keys = [self.v.app.items[i].key for i in g.members if i < len(self.v.app.items)]
+        self._lib("keep_auto", key, name, keys)
+        self.send(200, {"ok": True, "name": name})
+
+    def trash_list(self):
+        if not self.need_device():
+            return
+        out, tmap = [], {}
+        for it, rec in self.v.lib.trash_items():
+            tmap[it.key] = it
+            out.append({"id": it.key, "v": it.is_video, "d": it.date.strftime("%Y-%m-%d"), "r": it.ready,
+                        "days": self.v.lib.albums.days_left(rec), "dur": round(it.duration)})
+        self.v.trash_map = tmap
+        self.send(200, out)
+
+    def _trash_paths(self, ids):
+        ids = set(ids or [])
+        return [it.path for k, it in self.v.trash_map.items() if k in ids]
+
+    def trash_restore(self, data):
+        if not self.need_device():
+            return
+        self._lib("restore", self._trash_paths(data.get("ids")))
+        self.send(200, {"ok": True})
+
+    def trash_purge(self, data):
+        if not self.need_device():
+            return
+        paths = [p for p, _ in self.v.lib.albums.trash_list()] if data.get("all") else self._trash_paths(data.get("ids"))
+        self._lib("purge", paths)
         self.send(200, {"ok": True})
 
     def settings(self, data):

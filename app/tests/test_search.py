@@ -8,9 +8,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from vitrina import search  # noqa: E402
 
 ITEMS = [
-    NS(is_video=False, date=datetime(2019, 12, 24), collection="Navidad", place="Cancún"),
-    NS(is_video=True, date=datetime(2019, 12, 25), collection="Navidad", place="Mérida"),
-    NS(is_video=True, date=datetime(2021, 7, 1), collection="", place="París"),
+    NS(is_video=False, date=datetime(2019, 12, 24), collections=("Navidad",), place="Cancún"),
+    NS(is_video=True, date=datetime(2019, 12, 25), collections=("Navidad",), place="Mérida"),
+    NS(is_video=True, date=datetime(2021, 7, 1), collections=(), place="París"),
 ]
 place = lambda it: it.place  # noqa: E731
 
