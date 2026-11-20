@@ -938,6 +938,11 @@ class App(ORG.OrganizeMixin):
             self.open_trash(now)
 
     def pick_level(self, lvl, now):
+        if self.lvl == PHOTOS and self.coll_filter and self.filter_from_colls:
+            if lvl == COLLS:                 # ya estaba "en Colecciones": de vuelta a la lista
+                self.leave_filter(now)
+                return
+            self.set_filter(None, now, animate=False)    # otro nivel: sin la colección
         if lvl == PHOTOS:
             self.to_photos(self.hero, now, zi=self.zi)
         elif lvl == MONTHS:
@@ -3315,7 +3320,9 @@ class App(ORG.OrganizeMixin):
             options.append((COLLS, tr("Colecciones")))
         disabled = () if self.groups.has_years else (YEARS,)
         seg_x = 24
-        segs, total = g.segmented(options, self.lvl, seg_x, y, alpha=a, disabled=disabled)
+        # Dentro de una colección abierta desde Colecciones, el selector sigue en Colecciones.
+        inside = self.lvl == PHOTOS and self.coll_filter and self.filter_from_colls
+        segs, total = g.segmented(options, COLLS if inside else self.lvl, seg_x, y, alpha=a, disabled=disabled)
         for key, rect in segs:
             if key not in disabled:
                 self.hit(rect, lambda now, k=key: self.pick_level(k, now))

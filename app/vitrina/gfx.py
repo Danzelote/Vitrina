@@ -167,7 +167,7 @@ class Gfx:
         circ.fill((255, 255, 255, 0))
         pygame.draw.circle(circ, (255, 255, 255), (256, 256), 256)
         self.circle = self._tex(pygame.transform.smoothscale(circ, (256, 256)))
-        self.texts = LRU(200)
+        self.texts = LRU(400)
         self.pills = LRU(160)
         self.anims = {}          # estado animado de controles (selectores, interruptores)
         self.now = time.monotonic()

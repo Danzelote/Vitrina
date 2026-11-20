@@ -205,9 +205,24 @@ def _text(g, s, size, color, bold, x, y, alpha, view, anchor_bottom=False):
     return h
 
 
+_LINES = {}
+
+
 def fit_lines(g, text, size, bold, width, max_lines=2):
     """Parte un texto en renglones que quepan en `width`; si sobra, el último
-    termina en "…". (Para nombres largos dentro de los cuadros.)"""
+    termina en "…". (Para nombres largos dentro de los cuadros.) Se mide una
+    sola vez: el resultado se guarda (medir en cada cuadro de la animación
+    trababa la vista de Colecciones)."""
+    key = (text, size, bold, int(width), max_lines)
+    got = _LINES.get(key)
+    if got is None:
+        if len(_LINES) > 2000:
+            _LINES.clear()
+        got = _LINES[key] = _fit_lines(g, text, size, bold, width, max_lines)
+    return got
+
+
+def _fit_lines(g, text, size, bold, width, max_lines):
     def w(s):
         return g.tsize(g.text(s, size, C.TEXT, bold))[0]
     lines, cur = [], ""
