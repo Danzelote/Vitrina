@@ -205,6 +205,31 @@ def _text(g, s, size, color, bold, x, y, alpha, view, anchor_bottom=False):
     return h
 
 
+def fit_lines(g, text, size, bold, width, max_lines=2):
+    """Parte un texto en renglones que quepan en `width`; si sobra, el último
+    termina en "…". (Para nombres largos dentro de los cuadros.)"""
+    def w(s):
+        return g.tsize(g.text(s, size, C.TEXT, bold))[0]
+    lines, cur = [], ""
+    for word in text.split():
+        test = (cur + " " + word).strip()
+        if cur and w(test) > width:
+            lines.append(cur)
+            cur = word
+        else:
+            cur = test
+    if cur:
+        lines.append(cur)
+    if len(lines) > max_lines:
+        lines = lines[:max_lines - 1] + [" ".join(lines[max_lines - 1:])]
+    for k, line in enumerate(lines):
+        if w(line) > width:
+            while len(line) > 1 and w(line + "…") > width:
+                line = line[:-1]
+            lines[k] = line.rstrip() + "…"
+    return lines or [""]
+
+
 def draw_tile(g, items, tile, now, alpha, bg, hover=0.0, title_size=16, folder=False, view=None):
     """Un cuadro de grupo con su mini presentación. Devuelve su rectángulo en pantalla."""
     view = view or View()
@@ -238,7 +263,9 @@ def draw_tile(g, items, tile, now, alpha, bg, hover=0.0, title_size=16, folder=F
     pad = 14 if tile.size < 200 else 20
     sub_size = 12 if tile.size < 200 else 14
     h2 = _text(g, tile.sub, sub_size, (229, 229, 234), False, x + pad, y + size - pad, alpha, view, True)
-    _text(g, tile.title, title_size, C.TEXT, True, x + pad, y + size - pad - h2 + 2, alpha, view, True)
+    yb = y + size - pad - h2 + 2
+    for line in reversed(fit_lines(g, tile.title, title_size, True, size - 2 * pad)):
+        yb -= _text(g, line, title_size, C.TEXT, True, x + pad, yb, alpha, view, True) - 2
     g.corners(rx, ry, rw, rh, radius * view.k, bg, alpha)
     return (rx, ry, rw, rh)
 

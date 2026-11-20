@@ -31,6 +31,7 @@ from .places import place_of, PLACES  # noqa: E402
 from . import autos as AUTOS  # noqa: E402
 from . import organize as ORG  # noqa: E402
 from . import faces as FACES  # noqa: E402
+from . import textfield as TF  # noqa: E402
 from . import wifi as WIFI  # noqa: E402
 from . import qrscan as QR  # noqa: E402
 from . import splash as SPL  # noqa: E402
@@ -117,9 +118,10 @@ class App(ORG.OrganizeMixin):
         T.set(TH.resolve(self.settings.theme))
         I18N.set_lang(self.settings.language)
         self.zoom_sign = -1 if invert_zoom else 1
-        self.coll_filter = None
+        self.coll_filter, self.filter_from_colls = None, False
         self.query, self.query_ok = "", None     # búsqueda (ver search.py)
-        self.search_open, self.search_text, self.search_due = False, "", None
+        self.search_open, self.search_due = False, None
+        self.sfield = TF.TextField(limit=40)     # lo que se escribe en la búsqueda
         self.plane = cam.Grid(range(len(items)))
         self.regrid = None          # animación al cambiar de colección o búsqueda
         self.groups = self.make_groups(items)
@@ -385,10 +387,21 @@ class App(ORG.OrganizeMixin):
         members = [i for i in range(len(self.items)) if self.matches(i)]
         return members or list(range(len(self.items)))
 
-    def set_filter(self, name, now=None, animate=True):
-        """Colección elegida (None = todas): la cuadrícula se rehace solo con esas fotos."""
+    def set_filter(self, name, now=None, animate=True, from_colls=False):
+        """Colección elegida (None = todas): la cuadrícula se rehace solo con esas fotos.
+        from_colls: se entró desde Colecciones (al salir, se regresa ahí)."""
         self.coll_filter = name
+        self.filter_from_colls = bool(name) and from_colls
         self.refilter(now, animate)
+
+    def leave_filter(self, now):
+        """La "×" de la colección (y Esc): de vuelta a Colecciones si se entró desde ahí."""
+        back = self.filter_from_colls and self.lib
+        if back:
+            self.set_filter(None, now, animate=False)
+            self.go_level(COLLS, now)
+        else:
+            self.set_filter(None, now)
 
     def open_search(self, now):
         if self.mode != GRID:
@@ -396,46 +409,40 @@ class App(ORG.OrganizeMixin):
         if self.lvl != PHOTOS:
             self.to_photos(self.hero, now, zi=self.zi)
         self.search_open = True
-        self.search_text = self.query
+        self.sfield.set(self.query)
         self.search_eat = now + 0.2          # el "/" que abrió el campo no se escribe en él
-        pygame.key.start_text_input()
+        TF.begin()
 
     def close_search(self):
         self.search_open = False
-        pygame.key.stop_text_input()
+        TF.end()
 
     def clear_search(self, now):
         self.close_search()
-        self.search_text = ""
+        self.sfield.set("")
         self.search_due = None
         if self.query:
             self.set_query("", now)
 
     def type_search(self, e, now):
         """Mientras el campo de búsqueda está abierto, las teclas son para escribir."""
-        if e.type == pygame.TEXTINPUT:
-            if e.text in ("/", "f", "F") and now < getattr(self, "search_eat", 0):
-                return
-            if len(self.search_text) < 40:
-                self.search_text += e.text
-        elif e.key == pygame.K_BACKSPACE:
-            self.search_text = self.search_text[:-1]
-        elif e.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
-            self.set_query(self.search_text.strip(), now)
+        if e.type == pygame.TEXTINPUT and e.text in ("/", "f", "F") and now < getattr(self, "search_eat", 0):
+            return
+        if e.type == pygame.KEYDOWN and e.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+            self.set_query(self.sfield.text.strip(), now)
             self.close_search()
             return
-        elif e.key == pygame.K_ESCAPE:
+        if e.type == pygame.KEYDOWN and e.key == pygame.K_ESCAPE:
             self.clear_search(now)
             return
-        else:
-            return
-        self.search_due = now + 0.4          # busca solo cuando se deja de escribir un momento
+        if self.sfield.handle(e):
+            self.search_due = now + 0.4      # busca solo cuando se deja de escribir un momento
 
     def update_search(self, now):
         if self.search_due is not None and now >= self.search_due:
             self.search_due = None
-            if self.search_text.strip() != self.query:
-                self.set_query(self.search_text.strip(), now)
+            if self.sfield.text.strip() != self.query:
+                self.set_query(self.sfield.text.strip(), now)
 
     def set_query(self, text, now=None):
         now = time.monotonic() if now is None else now
@@ -913,7 +920,7 @@ class App(ORG.OrganizeMixin):
                 self.open_group(g, now)
                 return
             if g:
-                self.set_filter(g.key)
+                self.set_filter(g.key, from_colls=True)
             self.to_photos(g.members[0] if g and g.members else self.hero, now, origin)
 
     def open_group(self, g, now):
@@ -923,7 +930,7 @@ class App(ORG.OrganizeMixin):
         elif g.kind == "month":
             self.to_photos(g.members[0], now, origin)
         elif g.kind in ("coll", "auto"):
-            self.set_filter(g.key)
+            self.set_filter(g.key, from_colls=True)
             self.to_photos(g.members[0] if g.members else self.hero, now, origin)
         elif g.kind == "new":
             self.ask_new_collection(now)
@@ -1474,6 +1481,10 @@ class App(ORG.OrganizeMixin):
                 self.close_viewer(now)
             elif self.mode == GRID and self.lvl != PHOTOS:
                 self.level_in(now, at_mouse=False)
+            elif self.mode == GRID and self.query:          # un paso atrás: primero la búsqueda
+                self.clear_search(now)
+            elif self.mode == GRID and self.coll_filter:    # luego la colección
+                self.leave_filter(now)
             elif self.mode == GRID:
                 self.go_frame(self.hover_i if self.hover_i is not None else self.nearest(), now)
         elif e.key == pygame.K_f:
@@ -1970,7 +1981,7 @@ class App(ORG.OrganizeMixin):
         vp = self.player_for("view", self.morph_i)
         paused_video = bool(vp and not vp.is_playing)
         idle = now - self.mouse_at > (2.5 if not paused_video else 1e9)
-        clean = (self.keys_drove or idle) and not self.settings_open and self.m >= 0.999
+        clean = (self.keys_drove or idle) and not self.settings_open and not self.organize_open() and self.m >= 0.999
         target = 0.0 if clean else 1.0
         self.chrome_amt += (target - self.chrome_amt) * (1 - math.exp(-dt / (0.10 if not clean else 0.22)))
         # El acercamiento va un poco detrás de los controles: primero se van, luego crece.
@@ -2821,7 +2832,9 @@ class App(ORG.OrganizeMixin):
             self.draw_regrid(tx, ty, s, alpha, bg, radius, skip_morph)
             return
         for row in range(r0, r1 + 1):
-            for col in range(c0, c1 + 1):
+            # La última fila incompleta va centrada: sus columnas visibles se recorren.
+            shift = int(self.plane.plane._row_offset(row) // pitch)
+            for col in range(max(0, c0 - shift - 1), min(self.plane.cols - 1, c1 - shift + 1) + 1):
                 i = self.plane.item_at_slot(row * self.plane.cols + col)
                 if i is None or i >= n or (i == self.morph_i and skip_morph):
                     continue
@@ -2882,8 +2895,18 @@ class App(ORG.OrganizeMixin):
 
     def draw_tile(self, item, x, y, w, h, alpha, radius, bg, prefer_screen=False, idx=None, badge=False, snap=True):
         if self.select and badge and idx is not None:
-            self._draw_tile(item, x, y, w, h, alpha * self.tile_alpha(idx), radius, bg, prefer_screen, idx, badge, snap)
-            self.draw_tile_check(idx, x, y, w, alpha)
+            if item.key in self.select["keys"] and w >= 14:
+                # Elegida: marco azul, un poco más chica por dentro y palomita.
+                ring = max(2.0, min(4.0, w * 0.03))
+                self.gfx.round_rect(x, y, w, h, ORG.BLUE + (255,), alpha, radius + ring)
+                k = 0.88 if w > 60 else 0.8
+                ix, iy, iw, ih = x + w * (1 - k) / 2, y + h * (1 - k) / 2, w * k, h * k
+                self.gfx.round_rect(x + ring, y + ring, w - 2 * ring, h - 2 * ring, bg, alpha, radius)
+                self._draw_tile(item, ix, iy, iw, ih, alpha, radius * k, bg, prefer_screen, idx, badge, snap)
+                self.draw_tile_check(idx, x, y, w, alpha)
+            else:
+                self._draw_tile(item, x, y, w, h, alpha * self.tile_alpha(idx), radius, bg, prefer_screen,
+                                idx, badge, snap)
             return
         self._draw_tile(item, x, y, w, h, alpha, radius, bg, prefer_screen, idx, badge, snap)
 
@@ -3275,17 +3298,8 @@ class App(ORG.OrganizeMixin):
             fx = r[0] - 10 - fw
             g.round_rect(fx, y, fw, 44, T.button, a)
             g.draw_icon("search", fx + 14, y + 13, 18, T.text_secondary, a)
-            text = self.search_text
-            if text:
-                tt = g.text(text, 15, T.text)
-                tw, th = g.tsize(tt)
-                tt.alpha = int(255 * a)
-                tt.draw(dstrect=(fx + 42, y + (44 - th) / 2, tw, th))
-            else:
-                tw = 0
-                g.label(tr("videos, 2019, diciembre, Cancún…"), fx + 42, y + 13, 14, a, color=T.text_secondary)
-            if int(now * 2) % 2 == 0:
-                g.rect(fx + 43 + tw, y + 12, 2, 20, T.text, a)
+            self.sfield.draw(g, fx + 42, y, 44, 15, T.text, a, now,
+                             placeholder=tr("videos, 2019, diciembre, Cancún…"), placeholder_color=T.text_secondary)
             self.hit((fx, y, fw, 44), lambda now: None)
         else:
             lr = g.icon_button("search", r[0] - 10 - 44, y, alpha=a, icon_size=20)
@@ -3308,7 +3322,7 @@ class App(ORG.OrganizeMixin):
         chip_x = seg_x + total + 12
         if self.coll_filter:
             fr = g.button(f"{self.filter_title()}  ×", chip_x, y + 6, h=32, alpha=a, active=True, size=13, pad=14)
-            self.hit(fr, lambda now: self.set_filter(None, now))
+            self.hit(fr, self.leave_filter)
             chip_x = fr[0] + fr[2] + 8
             if self.lib and self.lvl == PHOTOS:
                 mr = g.icon_button("more", chip_x, y + 6, size=32, alpha=a, icon_size=18)
@@ -3596,19 +3610,18 @@ class App(ORG.OrganizeMixin):
 
     def type_password(self, e):
         pw = self.pw
-        if e.type == pygame.TEXTINPUT:
-            if len(pw["text"]) < 63:
-                pw["text"] += e.text
-        elif e.key == pygame.K_BACKSPACE:
-            pw["text"] = pw["text"][:-1]
-        elif e.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+        if e.type == pygame.KEYDOWN and e.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
             self.wifi_connect()
-        elif e.key == pygame.K_ESCAPE:
+        elif e.type == pygame.KEYDOWN and e.key == pygame.K_ESCAPE:
             self.close_password()
+        else:
+            pw["field"].secret = not pw["show"]
+            pw["field"].handle(e)
+            pw["text"] = pw["field"].text
 
     def close_password(self):
         self.pw = None
-        pygame.key.stop_text_input()
+        TF.end()
 
     def wifi_connect(self):
         if self.pw and len(self.pw["text"]) >= 8:
@@ -3638,9 +3651,9 @@ class App(ORG.OrganizeMixin):
         if in_use:
             return
         if secure:
-            self.pw = {"ssid": ssid, "text": "", "show": False}
+            self.pw = {"ssid": ssid, "text": "", "show": False, "field": TF.TextField(limit=63, secret=True)}
             self.wifi.message = ""
-            pygame.key.start_text_input()
+            TF.begin()
         else:
             self.join_wifi(ssid)
 
@@ -3674,12 +3687,8 @@ class App(ORG.OrganizeMixin):
             g.label(tr("Escribe con el teclado de la Mac"), left, top + 22, 13, color=T.text_secondary)
             bx, by, bw, bh = left, top + 52, right - left, 46
             g.round_rect(bx, by, bw, bh, T.button, 1.0, 12)
-            shown = pw["text"] if pw["show"] else "•" * len(pw["text"])
-            t = g.text(shown or " ", 17, T.text)
-            tw, th = g.tsize(t)
-            t.draw(dstrect=(bx + 16, by + (bh - th) / 2, tw, th))
-            if int(now * 2) % 2 == 0:         # cursor que parpadea
-                g.rect(bx + 17 + (tw if pw["text"] else 0), by + 12, 2, bh - 24, T.text)
+            pw["field"].secret = not pw["show"]
+            pw["field"].draw(g, bx + 16, by, bh, 17, T.text, 1.0, now)
             ry = by + bh + 18
             ok = g.button(tr("Conectar"), left, ry, h=40, active=len(pw["text"]) >= 8, size=14)
             self.hit(ok, lambda now: self.wifi_connect())

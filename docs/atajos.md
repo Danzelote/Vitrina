@@ -7,7 +7,7 @@ En la Vitrina, la tecla **H** muestra esta lista en pantalla.
 | **P** | Empieza la presentación (o sale de ella). En el visor, empieza desde esa foto |
 | **← →** | Foto anterior o siguiente |
 | **Espacio** | Pausa o sigue el video |
-| **Esc** | Volver |
+| **Esc** | Un paso atrás: cierra menús y búsqueda, cancela la selección, quita el filtro (desde una colección regresa a Colecciones), y al final vuelve a la presentación |
 | **1 2 3 4** | Años, Meses, Fotos, Colecciones |
 | **+ −** | Acercar o alejar la cuadrícula (bien lejos, un mosaico con toda la biblioteca) |
 | **B · W · A** | Apariencia: oscuro (*black*), claro (*white*) o automático |
@@ -27,3 +27,15 @@ En la Vitrina, la tecla **H** muestra esta lista en pantalla.
 | **Control + L** (mantener 3 s) | Bloquea o desbloquea el teclado y el trackpad (por si pasa un gato). También se desbloquea desde el celular: Ajustes → General |
 
 Las teclas de volumen y brillo de la Mac también funcionan. La tecla de encendido pregunta si quieres reposo, apagar o reiniciar: elige con ↑ ↓ y acepta con Enter.
+
+## Al escribir (búsqueda, nombres, contraseña del WiFi)
+
+| Tecla | Qué hace |
+|---|---|
+| **⌘A** | Seleccionar todo (lo que escribas lo reemplaza) |
+| **⌘C · ⌘X · ⌘V** | Copiar, cortar y pegar |
+| **⌥⌫** · **⌘⌫** | Borrar una palabra · borrar hasta el inicio |
+| **← →** (con ⌥ o ⌘) | Mover el cursor (por palabra · al inicio o al final) |
+| Mantener una tecla | Se repite (por ejemplo, para borrar rápido) |
+
+Con Control en vez de ⌘ también funciona, por si usas un teclado que no es de Mac.

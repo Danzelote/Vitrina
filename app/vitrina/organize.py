@@ -11,6 +11,8 @@ import math
 import pygame
 
 from . import livelib
+from . import textfield as TF
+from .levels import fit_lines
 from .i18n import tr
 from .theme import T
 
@@ -38,7 +40,7 @@ class OrganizeMixin:
     def close_organize(self):
         """Al volver a la presentación: nada de esto se queda abierto."""
         if self.dialog and self.dialog.get("input") is not None:
-            pygame.key.stop_text_input()
+            TF.end()
         self.menu = self.dialog = self.select = self.trash_ui = None
 
     # -- biblioteca ------------------------------------------------------------------
@@ -74,6 +76,13 @@ class OrganizeMixin:
                 self.hero = self.morph_i = nxt
             else:
                 self.close_viewer(now)
+        elif self.items and self.items[self.hero].key in keys:
+            # La foto "principal" de la cuadrícula se va: otra cercana toma su lugar
+            # (si no, la Vitrina se iría a la presentación).
+            rest = [k for k in range(len(self.items)) if self.items[k].key not in keys]
+            if rest:
+                k = min(rest, key=lambda k: abs(k - self.hero))
+                self.hero = self.morph_i = k
         n = self.lib.trash_keys(keys)
         self.lib_refresh(now, items_changed=True)
         self.say(tr("Se movió a Eliminadas recientemente") if n == 1
@@ -127,21 +136,24 @@ class OrganizeMixin:
     def open_dialog(self, title, text, buttons, now, input_text=None, placeholder=""):
         """buttons: [(texto, fn(now, valor), estilo)]; el último es el principal."""
         self.menu = None
-        self.dialog = {"title": title, "text": text, "buttons": buttons, "input": input_text,
-                       "placeholder": placeholder, "at": now}
+        field = None
         if input_text is not None:
-            pygame.key.start_text_input()
+            field = TF.TextField(input_text, limit=60)
+            field.all = bool(input_text)      # un nombre sugerido viene seleccionado: se reemplaza al escribir
+            TF.begin()
+        self.dialog = {"title": title, "text": text, "buttons": buttons, "input": field,
+                       "placeholder": placeholder, "at": now}
 
     def dialog_press(self, k, now):
         d = self.dialog
         if not d:
             return
-        value = (d["input"] or "").strip() if d["input"] is not None else None
+        value = d["input"].text.strip() if d["input"] is not None else None
         label, fn, style = d["buttons"][k]
         if style == "primary" and d["input"] is not None and not value:
             return                                  # sin nombre no se puede
         if d["input"] is not None:
-            pygame.key.stop_text_input()
+            TF.end()
         self.dialog = None
         if fn:
             fn(now, value)
@@ -168,17 +180,8 @@ class OrganizeMixin:
         if d["input"] is not None:
             yy += 6
             g.round_rect(x + 28, yy, w - 56, 44, T.button, a, 12)
-            text = d["input"]
-            if text:
-                t = g.text(text, 15, T.text)
-                tw, th = g.tsize(t)
-                t.alpha = int(255 * a)
-                t.draw(dstrect=(x + 42, yy + (44 - th) / 2, tw, th))
-            else:
-                tw = 0
-                g.label(d["placeholder"], x + 42, yy + 13, 15, a, color=T.text_secondary)
-            if int(now * 2) % 2 == 0:
-                g.rect(x + 43 + tw, yy + 12, 2, 20, T.text, a)
+            d["input"].draw(g, x + 42, yy, 44, 15, T.text, a, now,
+                            placeholder=d["placeholder"], placeholder_color=T.text_secondary)
             yy += 54
         # Botones a la derecha; el principal al final.
         bx = x + w - 28
@@ -199,20 +202,21 @@ class OrganizeMixin:
 
     def dialog_event(self, e, now):
         d = self.dialog
-        if e.type == pygame.TEXTINPUT and d["input"] is not None:
-            if len(d["input"]) < 60:
-                d["input"] += e.text
-        elif e.type == pygame.KEYDOWN:
+        if e.type == pygame.KEYDOWN and e.key in (pygame.K_ESCAPE, pygame.K_RETURN, pygame.K_KP_ENTER):
+            pass
+        elif d["input"] is not None and d["input"].handle(e):
+            return
+        if e.type == pygame.KEYDOWN:
             if e.key == pygame.K_ESCAPE:
                 cancel = next((k for k, b in enumerate(d["buttons"]) if b[2] == "cancel"), None)
                 if cancel is not None:
                     self.dialog_press(cancel, now)
                 else:
+                    if d["input"] is not None:
+                        TF.end()
                     self.dialog = None
             elif e.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
                 self.dialog_press(len(d["buttons"]) - 1, now)
-            elif e.key == pygame.K_BACKSPACE and d["input"] is not None:
-                d["input"] = d["input"][:-1]
 
     # -- nombres ---------------------------------------------------------------------
 
@@ -287,15 +291,23 @@ class OrganizeMixin:
                     self.lib_refresh(now)
                     self.say(tr("Agregada a “{c}”", c=name) if len(keys) == 1
                              else tr("{n} agregadas a “{c}”", n=len(keys), c=name), now)
+                self.end_pick()
             return run
         items = []
         for name in self.user_collections()[:9]:
             on = bool(chosen) and all(name in it.collections for it in chosen)
             items.append((name, toggle(name), "check" if on else "nocheck"))
-        items.append((tr("Nueva colección…"), lambda now: self.ask_new_collection(
-            now, then=lambda name: self.lib.add_to(keys, name)), ""))
+        def add_new(name):
+            self.lib.add_to(keys, name)
+            self.end_pick()
+        items.append((tr("Nueva colección…"), lambda now: self.ask_new_collection(now, then=add_new), ""))
         self.open_menu(anchor[0] - MENU_W + anchor[2], anchor[1] + anchor[3] + 8, items, now,
                        title=tr("Agregar a colección"))
+
+    def end_pick(self):
+        """Terminó la tarea con lo seleccionado: de vuelta a la vista normal."""
+        if self.select and self.select["mode"] == "pick":
+            self.select = None
 
     def remove_keys(self, keys, name, now):
         self.lib.remove_from(set(keys), name)
@@ -370,9 +382,9 @@ class OrganizeMixin:
 
     def tile_alpha(self, i):
         """En el modo Seleccionar, las que no están elegidas se ven apagadas."""
-        if not self.select or i >= len(self.items):
-            return 1.0
-        return 1.0 if self.items[i].key in self.select["keys"] else 0.32
+        if not self.select or i >= len(self.items) or self.select["mode"] == "pick":
+            return 1.0          # al seleccionar, todas se ven normales (las elegidas llevan marco)
+        return 1.0 if self.items[i].key in self.select["keys"] else 0.55
 
     def draw_tile_check(self, i, x, y, w, alpha):
         if not self.select or self.items[i].key not in self.select["keys"] or w < 26:
@@ -544,9 +556,13 @@ class OrganizeMixin:
         s = min(64, rw * 0.3)
         if icon:
             g.draw_icon(icon, rx + (rw - s) / 2, ry + rh * 0.36 - s / 2, s, T.text_secondary, alpha)
-        g.label_centered(t.title, rx + rw / 2, ry + rh * 0.62, 16 if rw > 170 else 13, alpha, True)
+        size = 16 if rw > 170 else 13
+        yy = ry + rh * 0.58
+        for line in fit_lines(g, t.title, size, True, rw - 24):      # "Eliminadas / recientemente"
+            g.label_centered(line, rx + rw / 2, yy, size, alpha, True)
+            yy += size * 1.3
         if t.sub:
-            g.label_centered(t.sub, rx + rw / 2, ry + rh * 0.62 + 24, 12, alpha, color=T.text_secondary)
+            g.label_centered(t.sub, rx + rw / 2, yy + 4, 12, alpha, color=T.text_secondary)
         return (rx, ry, rw, rh)
 
 
